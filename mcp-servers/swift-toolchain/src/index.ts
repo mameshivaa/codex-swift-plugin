@@ -129,7 +129,7 @@ interface ProjectConfig {
 }
 
 async function loadConfig(root: string): Promise<ProjectConfig> {
-  for (const name of [".codex-swift.json", ".codex-swift.jsonc"]) {
+  for (const name of [".swift-agent.json", ".swift-agent.jsonc"]) {
     try {
       const raw = await readFile(join(root, name), "utf-8");
       return JSON.parse(raw.replace(/\/\/.*$/gm, ""));
@@ -246,7 +246,7 @@ export function xcodeSimulatorBuildPlan(
 
 export function simulatorEvidencePaths(root: string, scheme: string): { derivedDataPath: string; screenshotPath: string; logPath: string } {
   const safeScheme = scheme.replace(/[^A-Za-z0-9_.-]/g, "_");
-  const base = join(root, ".codex-swift", "simulator");
+  const base = join(root, ".swift-agent", "simulator");
   return {
     derivedDataPath: join(base, "DerivedData", safeScheme),
     screenshotPath: join(base, `${safeScheme}-screenshot.png`),
@@ -661,7 +661,7 @@ export function repairPlanCommandsFromRerun(
     const target = args.xcodeTarget ?? ["-scheme", args.scheme];
     if (level === "simulator") {
       const destination = simulatorDestination(args.simulator);
-      const derivedDataPath = args.derivedDataPath ?? join(root ?? ".", ".codex-swift", "simulator", "DerivedData", args.scheme);
+      const derivedDataPath = args.derivedDataPath ?? join(root ?? ".", ".swift-agent", "simulator", "DerivedData", args.scheme);
       return [
         commandInvocation(
           "xcodebuild",
@@ -1740,7 +1740,7 @@ async function resolveXcodeBuildSelection(
       error: "No Xcode scheme was provided or discovered.",
       discoveredSchemes,
       suggestion:
-        "Pass scheme explicitly, set defaultScheme in .codex-swift.json, or ensure the scheme is shared in Xcode.",
+        "Pass scheme explicitly, set defaultScheme in .swift-agent.json, or ensure the scheme is shared in Xcode.",
     };
   }
 
@@ -2113,7 +2113,7 @@ server.tool(
       results.schemes = await readXcodeSchemes(root, files);
     }
 
-    // Config file (.codex-swift.json)
+    // Config file (.swift-agent.json)
     if (config.defaultScheme || config.excludePaths || config.timeouts) {
       results.config = config;
     }
@@ -3524,7 +3524,7 @@ server.tool(
     const searchUrl = `https://swiftpackageindex.com/search?query=${encodeURIComponent(query)}`;
     const result = await run(
       "curl",
-      ["-s", "-L", "-H", "User-Agent: codex-swift-plugin/0.2", "--max-time", "10", searchUrl],
+      ["-s", "-L", "-H", "User-Agent: swift-agent-toolchain/0.4", "--max-time", "10", searchUrl],
       { timeout: 15_000 }
     );
 

@@ -1,32 +1,32 @@
-# Codex Swift Plugin
+# Swift Agent Toolchain
 
-[OpenAI Codex](https://openai.com/codex) plugin that makes Swift vibe-coding actually work. 21 MCP tools, 6 skills. Goes beyond "does it compile" to catch the bugs that actually matter: empty UI actions, missing permissions, async state corruption, time-domain drift, render path divergence, and incomplete feature implementation.
+MCP toolchain that connects AI coding agents to the Swift development ecosystem. 21 MCP tools, 6 skills. Targets the bugs that AI-generated Swift code actually produces: empty UI actions, missing permissions, async state corruption, and incomplete feature implementation.
+
+Works with **Claude Code**, **Codex**, **Cursor**, and **GitHub Copilot**.
+
+> **Status: prototype (v0.4.0).** Verification tools use regex pattern matching, not SwiftSyntax AST. Expect false positives. Runtime check captures screenshots but does not execute tap sequences. See [Maturity](#maturity) for details.
 
 ## Install
 
-### Option A: One command (recommended)
+### Option A: Clone into your project
 
 ```bash
-codex plugin marketplace add https://github.com/mameshivaa/codex-swift-plugin
+git clone https://github.com/mameshivaa/swift-agent-toolchain.git .agents/plugins/swift-agent
+cd .agents/plugins/swift-agent && npm run build
 ```
 
-### Option B: Clone into your project
+### Option B: Git submodule
 
 ```bash
-# Per-project
-git clone https://github.com/mameshivaa/codex-swift-plugin.git .agents/plugins/codex-swift
-cd .agents/plugins/codex-swift && npm run build
-
-# Or globally (all projects)
-git clone https://github.com/mameshivaa/codex-swift-plugin.git ~/.agents/plugins/codex-swift
-cd ~/.agents/plugins/codex-swift && npm run build
+git submodule add https://github.com/mameshivaa/swift-agent-toolchain.git .agents/plugins/swift-agent
+cd .agents/plugins/swift-agent && npm run build
 ```
 
-### Option C: Git submodule
+### Option C: Global install
 
 ```bash
-git submodule add https://github.com/mameshivaa/codex-swift-plugin.git .agents/plugins/codex-swift
-cd .agents/plugins/codex-swift && npm run build
+git clone https://github.com/mameshivaa/swift-agent-toolchain.git ~/.agents/plugins/swift-agent
+cd ~/.agents/plugins/swift-agent && npm run build
 ```
 
 ### Prerequisites
@@ -37,48 +37,91 @@ cd .agents/plugins/codex-swift && npm run build
 | Xcode + Command Line Tools | [swift-format](https://github.com/swiftlang/swift-format) |
 | Swift 5.9+ toolchain | |
 
-## Verify installation
+## Example session
 
-Open a Swift project and start Codex. You should see:
-
-```
-Detecting Swift project...
-Swift project detected: **YourApp** (SwiftPM)
-```
-
-Run any skill with `@codex-swift` or let Codex pick automatically:
+A realistic flow: AI generates a SwiftUI login screen, the toolchain catches what the compiler misses.
 
 ```
-Fix all compile errors in this project
+User: "build me a login screen with email/password"
+
+─── Agent generates LoginView.swift ───
+
+> swift_diagnostics(files: ["LoginView.swift"])
+  ✓ No compile errors (SourceKit-LSP, 0.9s)
+
+> swift_behavior_verify(files: ["LoginView.swift"])
+  ✗ 2 issues found:
+    [EMPTY_ACTION] Line 24: Button("Login") { } — action body is empty
+    [UNUSED_STATE] Line 8: @State var errorMessage — declared but never read in body
+
+─── Agent fixes: adds authentication call in button, displays errorMessage ───
+
+> swift_behavior_verify(files: ["LoginView.swift"])
+  ✓ 0 issues
+
+> swift_intent_check(files: ["LoginView.swift"], intent: "login screen with email/password")
+  ✗ 1 gap:
+    [MISSING] No error handling for failed authentication (no Alert or error display after URLSession call)
+
+─── Agent adds error handling with .alert modifier ───
+
+> swift_runtime_check(path: ".", scheme: "MyApp")
+  ✓ Built and launched on iPhone 16 Pro simulator
+  ✓ Screenshot saved to .swift-agent/screenshots/runtime-check-001.png
+    (Manual review: login form visible, both fields rendered, button present)
 ```
+
+**What this doesn't do yet:** `swift_runtime_check` captures a screenshot but cannot tap buttons or verify interactive behavior. The `swift_intent_check` matches keywords ("login" → expects TextField, SecureField, URLSession), not semantic understanding. See [Maturity](#maturity).
 
 ## What's inside
 
 ### 21 MCP Tools
 
+**Core build/diagnose (battle-tested):**
+
 | Tool | What it does |
 |------|-------------|
 | `swift_project_describe` | Detect project type, targets, schemes, available tools |
-| `swift_symbol_search` | Find symbols across the codebase |
-| `swift_diagnostics` | **SourceKit-LSP diagnostics** (~1s) with build fallback |
+| `swift_diagnostics` | SourceKit-LSP diagnostics (~1s) with build fallback |
 | `swift_build` | Incremental build with `stopAfter: typecheck` support |
 | `swift_test` | Run tests with filtering |
+| `swift_verify` | Staged verification loop (diagnostics → typecheck → build → test) |
+| `swift_repair_plan` | Generate source-aware repair plan from failures |
+| `swift_repair_next_step` | Step through repair execution queue |
+| `swift_xcode_info` | Xcode Bridge — schemes, build settings, signing, destinations |
+
+**Code quality:**
+
+| Tool | What it does |
+|------|-------------|
 | `swift_format` | Format with swift-format |
 | `swift_lint` | Lint with SwiftLint |
+| `swift_symbol_search` | Find symbols across the codebase |
+
+**Dependencies and preview:**
+
+| Tool | What it does |
+|------|-------------|
 | `swift_preview` | Detect and generate SwiftUI `#Preview` blocks |
 | `swift_package_search` | Search Swift Package Index |
 | `swift_package_resolve` | Resolve package dependencies |
+
+**Devices and simulators:**
+
+| Tool | What it does |
+|------|-------------|
 | `swift_simulator_list` | List available simulators |
 | `swift_simulator_run` | Build and run on simulator |
 | `swift_device_list` | List connected devices |
-| `swift_xcode_info` | **Xcode Bridge** -- schemes, build settings, signing, destinations |
-| `swift_verify` | Staged verification loop (diagnostics -> typecheck -> build -> test) |
-| `swift_repair_plan` | Generate source-aware repair plan from failures |
-| `swift_repair_next_step` | Select next step in repair execution queue |
-| `swift_behavior_verify` | **Semantic bug detection** (24 patterns) -- empty actions, unused state, Bool flag clusters, stale async, silent error swallowing, deep nesting |
-| `swift_deep_verify` | **Architectural bug detection** -- permissions, async state, time-domain, render divergence, implicit assumptions |
-| `swift_runtime_check` | **Visual verification** -- build, launch on simulator, capture screenshot |
-| `swift_intent_check` | **Intent fulfillment** -- verify code does what the user actually asked for |
+
+**Verification (experimental, regex-based):**
+
+| Tool | What it does | Limitation |
+|------|-------------|------------|
+| `swift_behavior_verify` | 24-pattern check: empty actions, unused state, Bool clusters, stale async, silent errors | Regex, not AST — false positives on complex expressions |
+| `swift_deep_verify` | Architectural checks for AVFoundation/ScreenCaptureKit apps | Domain-specific; only useful for media/capture projects |
+| `swift_runtime_check` | Build, launch on simulator, capture screenshot | Screenshot only — does not execute tap sequences |
+| `swift_intent_check` | Check if code matches stated intent | Keyword matching, not semantic understanding |
 
 ### 6 Skills
 
@@ -93,25 +136,8 @@ Fix all compile errors in this project
 
 ### 2 Lifecycle Hooks
 
-- **SessionStart** -- Auto-detects Swift projects and injects context
-- **PostToolUse** -- Triggers verification after `.swift` file edits
-
-## Configuration
-
-Create `.codex-swift.json` in your project root:
-
-```json
-{
-  "defaultScheme": "MyApp",
-  "excludePaths": ["DerivedData", ".build"],
-  "timeouts": {
-    "build": 180000,
-    "test": 120000
-  },
-  "postEditVerify": true,
-  "postEditVerifyTimeoutSeconds": 25
-}
-```
+- **SessionStart** — Auto-detects Swift projects and injects context
+- **PostToolUse** — Triggers verification after `.swift` file edits (SwiftPM only; Xcode projects fall back to `swift_verify`)
 
 ## How it works
 
@@ -128,7 +154,7 @@ User: "build me a login screen"
               |
               no
               v
-  2. swift_behavior_verify - does it actually work?
+  2. swift_behavior_verify - does it have obvious bugs? (regex-based)
               |
          empty actions?  --yes--> fix empty closures --> loop
          broken nav?
@@ -136,15 +162,13 @@ User: "build me a login screen"
               |
               no
               v
-  3. swift_intent_check --- does it do what was asked?
+  3. swift_intent_check --- does it have the right keywords? (not semantic)
               |
-         missing auth?   --yes--> implement missing features --> loop
-         no error handling?
-         no data persistence?
+         missing pieces?  --yes--> implement missing features --> loop
               |
               no
               v
-  4. swift_runtime_check -- does it look right?
+  4. swift_runtime_check -- does it render? (screenshot only)
               |
               v
          screenshot from simulator
@@ -153,20 +177,33 @@ User: "build me a login screen"
               |
               no
               v
-           Done. Working app.
+           Done — compiles, passes pattern checks, renders.
+           Manual testing still required for interactive behavior.
 ```
+
+## Maturity
+
+| Component | Status | What works | What doesn't yet |
+|-----------|--------|------------|------------------|
+| SourceKit-LSP diagnostics | **Solid** | ~1s incremental diagnostics, build fallback | stderr suppressed — LSP failures appear as "no diagnostics" |
+| Build/test/verify loop | **Solid** | Staged verification, repair queue, stall detection | — |
+| Repair execution queue | **Solid** | Failure fingerprinting, loop detection, escalation | — |
+| Xcode Bridge | **Usable** | Schemes, build settings, signing, destinations | No workspace-level resolution |
+| `swift_behavior_verify` | **Prototype** | Catches empty actions, unused state, common patterns | Regex-based; no type resolution; `.toggle()` false positive on multi-@State files |
+| `swift_deep_verify` | **Prototype** | AVFoundation/ScreenCaptureKit pattern detection | Domain-specific only; regex-based |
+| `swift_intent_check` | **Prototype** | Keyword-category matching (login, CRUD, navigation) | Not semantic; over-prescriptive (e.g., requires persistence for all login flows) |
+| `swift_runtime_check` | **Prototype** | Build + launch + screenshot on simulator | No tap execution; no screenshot comparison; no accessibility inspection |
+| Post-edit hook | **Usable** | Auto-verifies SwiftPM projects after edits | Xcode projects get "use swift_verify" message only |
 
 ## Setup for AI agents
 
-Run one command in your Swift project to configure all major AI coding agents (Claude Code, Codex, Cursor, GitHub Copilot) to use the codex-swift tools:
+Run one command to configure all major AI coding agents:
 
 ```bash
-bash .agents/plugins/codex-swift/scripts/setup-project.sh
-# or if installed globally:
-bash ~/.agents/plugins/codex-swift/scripts/setup-project.sh /path/to/your/project
+bash .agents/plugins/swift-agent/scripts/setup-project.sh
 ```
 
-This creates:
+This creates instruction files that tell each agent to prefer the MCP tools over raw shell commands:
 
 | File | Agent |
 |------|-------|
@@ -174,25 +211,56 @@ This creates:
 | `.codex/instructions.md` | Codex |
 | `.cursorrules` | Cursor |
 | `.github/copilot-instructions.md` | GitHub Copilot |
-| `.codex-swift.json` | Plugin config |
+| `.swift-agent.json` | Plugin config |
 
-Each file tells the respective agent to prefer the codex-swift MCP tools over raw shell commands for Swift development.
+> **Note:** Existing files are skipped, not overwritten. No backup or dry-run mode yet.
 
-You can also copy individual template files from `templates/` manually.
+## Configuration
+
+Create `.swift-agent.json` in your project root:
+
+```json
+{
+  "defaultScheme": "MyApp",
+  "excludePaths": ["DerivedData", ".build"],
+  "timeouts": {
+    "build": 180000,
+    "test": 120000
+  },
+  "postEditVerify": true,
+  "postEditVerifyTimeoutSeconds": 25
+}
+```
 
 ## Project structure
 
 ```
 .codex-plugin/plugin.json    Plugin manifest
 skills/                      6 skill definitions (SKILL.md)
-mcp-servers/swift-toolchain/ MCP server (TypeScript, 4191 lines)
+mcp-servers/swift-toolchain/ MCP server (TypeScript)
 hooks/                       SessionStart + PostToolUse hooks
-templates/                   Agent instruction templates (CLAUDE.md, .cursorrules, etc.)
+templates/                   Agent instruction templates
 scripts/setup-project.sh     One-command project setup for all AI agents
 marketplace.json             Marketplace distribution config
-AGENTS.md                    Agent instructions (read by Codex and other agents)
+AGENTS.md                    Agent instructions
 assets/icon.svg              Plugin icon
 ```
+
+## What's strong
+
+- **Repair execution queue**: Failure fingerprinting, loop/stall detection, escalation — addresses the real problem of AI agents repeating the same failed fix.
+- **SourceKit-LSP integration**: Direct LSP connection for sub-second diagnostics instead of full builds.
+- **Multi-agent support**: Same toolchain works across Claude Code, Codex, Cursor, Copilot via per-agent instruction templates.
+- **Post-edit verification hook**: Automatic build-after-edit catches regressions immediately.
+
+## What needs work
+
+- Verification tools need SwiftSyntax AST instead of regex for production use.
+- Runtime check needs XCTest UI test generation or accessibility-based tap execution.
+- Intent check should delegate to the calling LLM rather than keyword matching.
+- Xcode project support (non-SwiftPM) is thin — post-edit hook doesn't auto-verify.
+- No CI integration or automated test suite for the toolchain itself.
+- `setup-project.sh` needs `--dry-run`, `--backup`, and append-mode for existing files.
 
 ## Contributing
 

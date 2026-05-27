@@ -5,8 +5,8 @@ Contributions are welcome. Here's how to get started.
 ## Setup
 
 ```bash
-git clone https://github.com/mameshivaa/codex-swift-plugin.git
-cd codex-swift-plugin
+git clone https://github.com/mameshivaa/swift-agent-toolchain.git
+cd swift-agent-toolchain
 npm run build
 ```
 
@@ -37,7 +37,7 @@ echo '{"cwd":"/path/to/swift-project","hook_event_name":"SessionStart"}' | bash 
 1. Create `skills/<skill-name>/SKILL.md`
 2. Include YAML frontmatter with `name` and `description`
 3. List which MCP tools the skill uses
-4. Test with Codex to verify trigger matching
+4. Test with your preferred AI agent to verify trigger matching
 
 ## Pull requests
 

@@ -1,11 +1,11 @@
 {
-  "name": "codex-swift-marketplace",
+  "name": "swift-agent-toolchain-marketplace",
   "interface": {
-    "displayName": "Codex Swift Plugins"
+    "displayName": "Swift Agent Toolchain"
   },
   "plugins": [
     {
-      "name": "codex-swift",
+      "name": "swift-agent-toolchain",
       "source": {
         "source": "local",
         "path": "."

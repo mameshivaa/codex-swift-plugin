@@ -1,7 +1,7 @@
 {
-  "name": "@codex-swift/mcp-swift-toolchain",
+  "name": "@swift-agent/mcp-toolchain",
   "version": "0.4.0",
-  "description": "MCP server bridging Codex to the Swift toolchain (SourceKit-LSP, SwiftPM, xcodebuild, simctl, SwiftLint, swift-format)",
+  "description": "MCP server bridging AI coding agents to the Swift toolchain (SourceKit-LSP, SwiftPM, xcodebuild, simctl, SwiftLint, swift-format)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

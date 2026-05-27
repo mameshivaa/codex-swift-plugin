@@ -1,8 +1,8 @@
 {
-  "name": "codex-swift-plugin",
-  "version": "0.3.0",
+  "name": "swift-agent-toolchain",
+  "version": "0.4.0",
   "private": true,
-  "description": "OpenAI Codex plugin for accelerating Swift/iOS development",
+  "description": "MCP toolchain for AI-assisted Swift/iOS development — works with Claude Code, Codex, Cursor, and Copilot",
   "scripts": {
     "build": "cd mcp-servers/swift-toolchain && npm install && npm run build",
     "postinstall": "npm run build",

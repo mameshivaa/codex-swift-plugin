@@ -3,7 +3,7 @@
 set -euo pipefail
 
 HOOK_INPUT=$(cat)
-CODEX_SWIFT_HOOK_INPUT="$HOOK_INPUT" python3 - <<'PY'
+SWIFT_AGENT_HOOK_INPUT="$HOOK_INPUT" python3 - <<'PY'
 import json
 import os
 import re
@@ -18,7 +18,7 @@ PATH_KEYS = {"file_path", "path", "filePath", "file"}
 
 def load_input():
     try:
-        return json.loads(os.environ.get("CODEX_SWIFT_HOOK_INPUT", "{}"))
+        return json.loads(os.environ.get("SWIFT_AGENT_HOOK_INPUT", "{}"))
     except Exception:
         return {}
 
@@ -75,7 +75,7 @@ def find_project_root(path_text):
 
 
 def load_config(root):
-    for name in [".codex-swift.json", ".codex-swift.jsonc"]:
+    for name in [".swift-agent.json", ".swift-agent.jsonc"]:
         path = root / name
         if not path.exists():
             continue
@@ -189,10 +189,10 @@ if not swift_files:
 
 root, project_type = find_project_root(swift_files[0])
 config = load_config(root)
-env_auto_verify = env_bool("CODEX_SWIFT_POST_EDIT_VERIFY")
+env_auto_verify = env_bool("SWIFT_AGENT_POST_EDIT_VERIFY")
 auto_verify = env_auto_verify if env_auto_verify is not None else config.get("postEditVerify", True)
 timeout_seconds = int(
-    os.environ.get("CODEX_SWIFT_POST_EDIT_TIMEOUT", config.get("postEditVerifyTimeoutSeconds", 25))
+    os.environ.get("SWIFT_AGENT_POST_EDIT_TIMEOUT", config.get("postEditVerifyTimeoutSeconds", 25))
 )
 
 verification = {

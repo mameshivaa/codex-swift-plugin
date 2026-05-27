@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Setup codex-swift agent instructions in a Swift project.
+# Setup swift-agent-toolchain instructions in a Swift project.
 # Usage: bash setup-project.sh [project-dir]
 #
 # Creates agent instruction files so that AI coding agents
-# (Codex, Claude Code, Cursor, GitHub Copilot, Cline)
-# automatically use the codex-swift plugin tools.
+# (Claude Code, Codex, Cursor, GitHub Copilot)
+# automatically use the swift-agent-toolchain MCP tools.
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ TEMPLATES="$PLUGIN_ROOT/templates"
 
 cd "$PROJECT_DIR"
 
-echo "Setting up codex-swift agent instructions in: $(pwd)"
+echo "Setting up swift-agent-toolchain instructions in: $(pwd)"
 
 # CLAUDE.md (Claude Code)
 if [ ! -f "CLAUDE.md" ]; then
@@ -51,9 +51,9 @@ else
   echo "  .github/copilot-instructions.md already exists, skipping"
 fi
 
-# .codex-swift.json (plugin config)
-if [ ! -f ".codex-swift.json" ]; then
-  cat > .codex-swift.json << 'JSON'
+# .swift-agent.json (toolchain config)
+if [ ! -f ".swift-agent.json" ]; then
+  cat > .swift-agent.json << 'JSON'
 {
   "excludePaths": ["DerivedData", ".build"],
   "timeouts": {
@@ -62,17 +62,17 @@ if [ ! -f ".codex-swift.json" ]; then
   }
 }
 JSON
-  echo "  Created .codex-swift.json"
+  echo "  Created .swift-agent.json"
 else
-  echo "  .codex-swift.json already exists, skipping"
+  echo "  .swift-agent.json already exists, skipping"
 fi
 
 echo ""
-echo "Done. AI agents will now use codex-swift tools when working on this project."
+echo "Done. AI agents will now use swift-agent-toolchain MCP tools when working on this project."
 echo ""
 echo "Files created:"
 echo "  CLAUDE.md              -- Claude Code"
 echo "  .codex/instructions.md -- Codex"
 echo "  .cursorrules           -- Cursor"
 echo "  .github/copilot-instructions.md -- GitHub Copilot"
-echo "  .codex-swift.json      -- Plugin config"
+echo "  .swift-agent.json      -- Toolchain config"
