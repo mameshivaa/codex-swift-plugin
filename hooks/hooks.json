@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${PLUGIN_ROOT}/hooks/session-start.sh",
+            "statusMessage": "Detecting Swift project..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Write|Edit|apply_patch|MultiEdit)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${PLUGIN_ROOT}/hooks/post-edit-verify.sh",
+            "statusMessage": "Verifying Swift changes...",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

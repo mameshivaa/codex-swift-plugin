@@ -1,0 +1,7 @@
+{
+  "swift-toolchain": {
+    "command": "node",
+    "args": ["${PLUGIN_ROOT}/mcp-servers/swift-toolchain/dist/index.js"],
+    "env": {}
+  }
+}

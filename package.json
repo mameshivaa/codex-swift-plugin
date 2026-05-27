@@ -1,0 +1,14 @@
+{
+  "name": "codex-swift-plugin",
+  "version": "0.3.0",
+  "private": true,
+  "description": "OpenAI Codex plugin for accelerating Swift/iOS development",
+  "scripts": {
+    "build": "cd mcp-servers/swift-toolchain && npm install && npm run build",
+    "postinstall": "npm run build",
+    "dev": "cd mcp-servers/swift-toolchain && npm run dev",
+    "test": "npm run test:hooks && npm --prefix mcp-servers/swift-toolchain test",
+    "test:hooks": "node --test test/hooks.test.mjs",
+    "test:mcp": "echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"0.1.0\"}}}' | node mcp-servers/swift-toolchain/dist/index.js"
+  }
+}

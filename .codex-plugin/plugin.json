@@ -1,0 +1,42 @@
+{
+  "name": "codex-swift",
+  "version": "0.3.0",
+  "description": "Accelerate Swift/iOS development with semantic analysis, incremental builds, Preview/Playground, simulator/device runs, and package discovery — all powered by the Swift toolchain.",
+  "author": {
+    "name": "codex-swift contributors",
+    "url": "https://github.com/codex-swift/codex-swift-plugin"
+  },
+  "license": "MIT",
+  "keywords": [
+    "swift",
+    "ios",
+    "xcode",
+    "swiftui",
+    "swiftpm",
+    "sourcekit",
+    "sourcekit-lsp",
+    "preview",
+    "simulator",
+    "xcode-bridge"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Codex Swift",
+    "shortDescription": "Swift development accelerator for Codex",
+    "longDescription": "Bridge Codex to the Swift toolchain with 17 MCP tools. SourceKit-LSP direct connection for fast diagnostics. Xcode Bridge for schemes, build settings, signing, and destinations. Automated verify → repair loops for self-healing builds. Supports SwiftPM and Xcode projects.",
+    "developerName": "codex-swift",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Codex Swift to explore a SwiftUI view with live Preview.",
+      "Use Codex Swift to fix all compile errors in this project.",
+      "Use Codex Swift to find a Swift package for networking."
+    ],
+    "brandColor": "#F05138"
+  }
+}

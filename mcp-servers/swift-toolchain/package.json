@@ -1,0 +1,24 @@
+{
+  "name": "@codex-swift/mcp-swift-toolchain",
+  "version": "0.3.0",
+  "description": "MCP server bridging Codex to the Swift toolchain (SourceKit-LSP, SwiftPM, xcodebuild, simctl, SwiftLint, swift-format)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-swift-toolchain": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:e2e:swiftpm": "npm run build && node --test test/swiftpm-e2e.mjs",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
