@@ -1,6 +1,6 @@
 {
   "name": "codex-swift",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Accelerate Swift/iOS development with semantic analysis, incremental builds, Preview/Playground, simulator/device runs, and package discovery — all powered by the Swift toolchain.",
   "author": {
     "name": "codex-swift contributors",
@@ -25,7 +25,7 @@
   "interface": {
     "displayName": "Codex Swift",
     "shortDescription": "Swift development accelerator for Codex",
-    "longDescription": "Bridge Codex to the Swift toolchain with 20 MCP tools. SourceKit-LSP diagnostics, Xcode Bridge, semantic behavior verification, intent fulfillment checking, and simulator visual verification. Makes Swift vibe-coding actually work — not just compile, but do what you asked for.",
+    "longDescription": "Bridge Codex to the Swift toolchain with 21 MCP tools. SourceKit-LSP diagnostics, Xcode Bridge, 24-pattern semantic verification, 25+ architectural pattern detection (AVFoundation/ScreenCaptureKit), intent fulfillment checking, and simulator visual verification. Catches the bugs vibe-coding actually produces: empty actions, impossible states, stale async, silent error swallowing, and more.",
     "developerName": "codex-swift",
     "category": "Developer Tools",
     "capabilities": [

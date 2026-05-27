@@ -2031,7 +2031,7 @@ async function getLSPClient(root: string): Promise<LSPClient> {
 
 const server = new McpServer({
   name: "swift-toolchain",
-  version: "0.3.0",
+  version: "0.4.0",
 });
 
 // ── Tool: swift_project_describe ──
@@ -4401,6 +4401,171 @@ function detectBehaviorIssues(filePath: string, content: string): BehaviorIssue[
           severity: "warning",
           message: `@State var ${sv} is declared but never mutated — the UI will never change based on this state.`,
           fix: `Either mutate ${sv} somewhere (e.g. in a button action), or change it to a let constant.`
+        });
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════
+  // Vibe-coding anti-patterns (second pass, full file)
+  // ════════════════════════════════════════════
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    const ln = i + 1;
+
+    // 16. Error suppression: try? silencing failures
+    if (/try\?/.test(trimmed) && !/\/\//.test(trimmed.split("try?")[0])) {
+      // Check if there's any fallback/logging
+      const context = lines.slice(i, Math.min(i + 3, lines.length)).join("\n");
+      if (!/log|print|assert|\?\?|guard|if let|else/.test(context)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "try-question-no-fallback",
+          severity: "warning",
+          message: "try? used without fallback handling. Failures are silently swallowed — you won't know when or why something breaks.",
+          fix: "Use do/catch to handle the error explicitly, or at minimum log the error: try? ... ?? { print(error) }."
+        });
+      }
+    }
+
+    // 17. Blanket guard else { return } hiding failures
+    if (/guard.*else\s*\{\s*return[\s;}]|guard.*else\s*\{\s*return\s*\}/.test(trimmed)) {
+      // Check the else clause and nearby lines for logging/error handling
+      // Only look at the guard line's else clause and surrounding comments
+      const guardElseContent = trimmed.replace(/guard.*else\s*\{/, "");
+      const prevLine = i > 0 ? lines[i - 1].trim() : "";
+      const hasComment = /^\s*\/\//.test(prevLine) || /\/\//.test(guardElseContent);
+      if (!hasComment && !/log|print|assert(?:ion)?|error|throw|fatalError|precondition/.test(guardElseContent)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "guard-silent-return",
+          severity: "warning",
+          message: "guard/else returns silently with no logging or error. The function will do nothing and you won't know why.",
+          fix: "Add a print(), assertionFailure(), or proper error callback inside the else clause so failures are visible."
+        });
+      }
+    }
+
+    // 18. Multiple Bool flags that should be an enum (impossible states)
+    // Look for 2+ Bool @State vars with related names in the same struct
+    if (/@State\s+(?:private\s+)?var\s+\w+\s*(?::\s*Bool|=\s*(?:true|false))/.test(trimmed)) {
+      // Count boolean @State vars in nearby lines (within 15 lines)
+      const nearby = lines.slice(Math.max(0, i - 7), Math.min(lines.length, i + 8)).join("\n");
+      const boolStateCount = (nearby.match(/@State\s+(?:private\s+)?var\s+\w+\s*(?::\s*Bool|=\s*(?:true|false))/g) || []).length;
+      if (boolStateCount >= 3) {
+        // Only report once (on first Bool in cluster)
+        const prevBoolCount = (lines.slice(Math.max(0, i - 8), i).join("\n").match(/@State.*Bool|@State.*(?:true|false)/g) || []).length;
+        if (prevBoolCount === 0) {
+          issues.push({
+            file: fileName, line: ln, pattern: "bool-flags-instead-of-enum",
+            severity: "warning",
+            message: `${boolStateCount} Bool @State variables clustered together. Multiple booleans create impossible states (e.g. isLoading=true AND isError=true AND isSuccess=true simultaneously).`,
+            fix: "Replace with a single enum: enum ViewState { case idle, loading, error(Error), success(Data) } and use @State var state: ViewState = .idle."
+          });
+        }
+      }
+    }
+
+    // 19. String used for state that should be enum
+    if (/@State\s+(?:private\s+)?var\s+(\w*(?:status|state|mode|phase|step|screen|page|tab|type)\w*)\s*(?::\s*String|=\s*")/.test(trimmed)) {
+      const varMatch = trimmed.match(/@State\s+(?:private\s+)?var\s+(\w+)/);
+      if (varMatch) {
+        issues.push({
+          file: fileName, line: ln, pattern: "string-state-should-be-enum",
+          severity: "warning",
+          message: `@State var ${varMatch[1]} is a String used for state/status/mode. String comparisons are typo-prone and don't enforce valid states.`,
+          fix: `Define an enum for the possible states: enum ${varMatch[1].charAt(0).toUpperCase() + varMatch[1].slice(1)} { case ... } and use that type instead.`
+        });
+      }
+    }
+
+    // 20. Stale async: Task without cancellation of previous task
+    if (/\.onChange\s*\(of:/.test(trimmed) || /\.onAppear/.test(trimmed) || /\.task\s*\{/.test(trimmed)) {
+      const body = lines.slice(i, Math.min(i + 10, lines.length)).join("\n");
+      if (/Task\s*\{/.test(body) && /await/.test(body)) {
+        if (!/\.cancel\(\)|currentTask|previousTask|task\?\.cancel|taskHandle/.test(body) && !/\.task\s*\(id:/.test(trimmed)) {
+          // Check if it's inside onChange (most likely to have stale async)
+          if (/\.onChange/.test(trimmed)) {
+            issues.push({
+              file: fileName, line: ln, pattern: "stale-async-no-cancel",
+              severity: "error",
+              message: "Task created inside .onChange without cancelling the previous one. When the value changes rapidly, old async results will overwrite the latest UI state.",
+              fix: "Store the Task in a @State var, cancel it before creating a new one, or use .task(id:) which auto-cancels on change."
+            });
+          }
+        }
+      }
+    }
+
+    // 21. @StateObject in child view (should be @ObservedObject)
+    if (/@StateObject\s+(?:private\s+)?var\s+(\w+)/.test(trimmed)) {
+      const varName = trimmed.match(/@StateObject\s+(?:private\s+)?var\s+(\w+)/)?.[1];
+      if (varName) {
+        // Two indicators: (1) explicit init passing it in, or (2) no inline initializer (= SomeType())
+        const structContext = lines.slice(Math.max(0, i - 20), i).join("\n");
+        const initContext = lines.slice(i, Math.min(lines.length, i + 30)).join("\n");
+        const hasExplicitInit = /init\s*\(/.test(initContext) && new RegExp(`${varName}\\s*=`).test(initContext) && /self\./.test(initContext);
+        // No inline initializer means it must be passed from parent
+        const hasInlineInit = /=\s*\w+\(/.test(trimmed);
+        if (hasExplicitInit || !hasInlineInit) {
+          issues.push({
+            file: fileName, line: ln, pattern: "stateobject-passed-in",
+            severity: "error",
+            message: `@StateObject var ${varName} appears to be passed in from a parent. @StateObject is for CREATING objects — it takes ownership and recreates on view reset.`,
+            fix: `Use @ObservedObject (or @Bindable for @Observable) when receiving an object from a parent. @StateObject is only for the view that creates the object.`
+          });
+        }
+      }
+    }
+
+    // 22. Global singleton store pattern fighting SwiftUI
+    if (/static\s+(?:let|var)\s+shared\s*=/.test(trimmed) && /ObservableObject|@Observable/.test(content)) {
+      const className = lines.slice(Math.max(0, i - 5), i).join("\n").match(/class\s+(\w+)/)?.[1];
+      if (className && /\bobjectWillChange\b|@Published|@Observable/.test(content)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "singleton-observable",
+          severity: "warning",
+          message: `${className}.shared is a singleton ObservableObject. Singletons fight SwiftUI's ownership model — views can't control the object's lifetime, testing requires global state reset, and preview becomes unreliable.`,
+          fix: "Inject the object via @Environment or pass it explicitly. If truly global, use @Environment(\\.modelContext) or custom EnvironmentKey."
+        });
+      }
+    }
+
+    // 23. ObservableObject without @Published on any property
+    if (/class\s+\w+\s*:.*ObservableObject/.test(trimmed)) {
+      const classBody = lines.slice(i, Math.min(lines.length, i + 30)).join("\n");
+      const nextClassOrEnd = classBody.indexOf("\nclass ") > 0 ? classBody.indexOf("\nclass ") : classBody.length;
+      const classContent = classBody.slice(0, nextClassOrEnd);
+      const hasPublished = /@Published/.test(classContent);
+      const hasVars = /\bvar\s+\w+\s*[=:]/.test(classContent);
+      if (!hasPublished && hasVars) {
+        issues.push({
+          file: fileName, line: ln, pattern: "observable-no-published",
+          severity: "error",
+          message: "ObservableObject class has var properties but none are @Published. UI will never update when properties change.",
+          fix: "Add @Published to properties that should trigger UI updates, or migrate to @Observable (Swift 5.9+) which tracks all properties automatically."
+        });
+      }
+    }
+
+    // 24. Deeply nested view body without extraction
+    if (/var\s+body\s*:\s*some\s+View/.test(trimmed)) {
+      let maxDepth = 0;
+      let depth = 0;
+      for (let j = i; j < Math.min(lines.length, i + 80); j++) {
+        for (const ch of lines[j]) {
+          if (ch === "{") depth++;
+          if (ch === "}") depth--;
+          if (depth > maxDepth) maxDepth = depth;
+        }
+        if (depth <= 0 && j > i + 2) break;
+      }
+      if (maxDepth > 8) {
+        issues.push({
+          file: fileName, line: ln, pattern: "deep-body-nesting",
+          severity: "warning",
+          message: `View body has ${maxDepth} levels of nesting. Deep nesting slows the type checker exponentially and makes state flow hard to reason about.`,
+          fix: "Extract subviews into separate structs or computed properties. Each extracted view should own its relevant state."
         });
       }
     }

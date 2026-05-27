@@ -75,7 +75,7 @@ Fix all compile errors in this project
 | `swift_verify` | Staged verification loop (diagnostics -> typecheck -> build -> test) |
 | `swift_repair_plan` | Generate source-aware repair plan from failures |
 | `swift_repair_next_step` | Select next step in repair execution queue |
-| `swift_behavior_verify` | **Semantic bug detection** -- empty actions, unused state, broken navigation, placeholder data |
+| `swift_behavior_verify` | **Semantic bug detection** (24 patterns) -- empty actions, unused state, Bool flag clusters, stale async, silent error swallowing, deep nesting |
 | `swift_deep_verify` | **Architectural bug detection** -- permissions, async state, time-domain, render divergence, implicit assumptions |
 | `swift_runtime_check` | **Visual verification** -- build, launch on simulator, capture screenshot |
 | `swift_intent_check` | **Intent fulfillment** -- verify code does what the user actually asked for |
