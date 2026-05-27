@@ -1,6 +1,6 @@
 # Codex Swift Plugin
 
-[OpenAI Codex](https://openai.com/codex) plugin that makes Swift vibe-coding actually work. 20 MCP tools, 6 skills, SourceKit-LSP diagnostics, semantic behavior verification, intent fulfillment checking, and simulator visual verification.
+[OpenAI Codex](https://openai.com/codex) plugin that makes Swift vibe-coding actually work. 21 MCP tools, 6 skills. Goes beyond "does it compile" to catch the bugs that actually matter: empty UI actions, missing permissions, async state corruption, time-domain drift, render path divergence, and incomplete feature implementation.
 
 ## Install
 
@@ -54,7 +54,7 @@ Fix all compile errors in this project
 
 ## What's inside
 
-### 20 MCP Tools
+### 21 MCP Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -76,6 +76,7 @@ Fix all compile errors in this project
 | `swift_repair_plan` | Generate source-aware repair plan from failures |
 | `swift_repair_next_step` | Select next step in repair execution queue |
 | `swift_behavior_verify` | **Semantic bug detection** -- empty actions, unused state, broken navigation, placeholder data |
+| `swift_deep_verify` | **Architectural bug detection** -- permissions, async state, time-domain, render divergence, implicit assumptions |
 | `swift_runtime_check` | **Visual verification** -- build, launch on simulator, capture screenshot |
 | `swift_intent_check` | **Intent fulfillment** -- verify code does what the user actually asked for |
 

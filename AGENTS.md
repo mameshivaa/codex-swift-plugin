@@ -16,6 +16,7 @@ Use the swift-toolchain tools whenever you:
 **Diagnosing problems** -- start here, not with `swift build` in a shell:
 - `swift_diagnostics` -- SourceKit-LSP diagnostics in ~1s. Pass specific file paths for LSP mode. Pass empty array for full-project build-based diagnostics.
 - `swift_behavior_verify` -- **catches bugs the compiler misses**: empty button actions, unused @State, missing @Published, broken navigation, placeholder data, deprecated patterns. Run this after every code generation.
+- `swift_deep_verify` -- **catches architectural bugs in media/capture/recording apps**: missing permission checks (ScreenCaptureKit, camera, accessibility), async state machine errors (finishWriting sync, state mutation off main thread, leaked streams), time-domain mistakes (Double for media time, mixed CMTime timescales, wall-clock sync), preview/export render divergence, and implicit assumptions (hardcoded track index, fps, screen order). **Run this on any project using AVFoundation, ScreenCaptureKit, CoreMedia, or real-time capture.**
 - `swift_intent_check` -- **verifies code fulfills the user's request**: pass the user's intent in natural language, get back a checklist of missing features. Catches "compiles but doesn't do what was asked" problems.
 - `swift_verify` -- staged verification (diagnostics -> typecheck -> build -> test). Use after edits to confirm correctness at every level.
 
@@ -70,6 +71,7 @@ Or use `swift_verify` which runs the build cascade automatically and returns a r
 - **Always call `swift_project_describe` first** when you enter an unfamiliar Swift project.
 - **Use `swift_diagnostics` for the edit-verify loop**, not full builds.
 - **Always run `swift_behavior_verify` after generating code** — compiling is not enough. Empty button actions, EmptyView destinations, and .constant() bindings are the most common vibe-coding failures.
+- **Run `swift_deep_verify` on media/recording/capture projects** — permission checks, async state machines, time-domain arithmetic, and render path consistency are where AVFoundation apps silently break.
 - **Always run `swift_intent_check` before presenting results** — verify the code actually fulfills the user's request. Don't deliver code that compiles but is missing features the user asked for.
 - **Follow the repair queue** when `swift_verify` fails.
 - **Run `swift_format` and `swift_lint` on changed files** before presenting results.

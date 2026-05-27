@@ -4473,6 +4473,423 @@ server.tool(
   }
 );
 
+// ── Deep Verify: permission, async, time-domain, render-path, implicit-assumption detection ──
+
+interface DeepIssue {
+  file: string;
+  line: number;
+  category: "permission" | "async-state" | "time-domain" | "render-divergence" | "implicit-assumption";
+  severity: "error" | "warning";
+  pattern: string;
+  message: string;
+  fix: string;
+}
+
+function detectDeepIssues(filePath: string, content: string): DeepIssue[] {
+  const issues: DeepIssue[] = [];
+  const lines = content.split("\n");
+  const fileName = filePath.split("/").pop() || filePath;
+  const allCode = content;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    const ln = i + 1;
+    const context10 = lines.slice(Math.max(0, i - 5), Math.min(lines.length, i + 5)).join("\n");
+
+    // ════════════════════════════════════════════
+    // CATEGORY 1: Permission / Environment
+    // ════════════════════════════════════════════
+
+    // 1a. ScreenCaptureKit without permission check
+    if (/SCShareableContent|SCStream|SCContentFilter|SCScreenshotManager/.test(trimmed)) {
+      if (!/CGRequestScreenCaptureAccess|SCShareableContent\.current|requestAccess|canRecord|isScreenCaptureAllowed/.test(allCode)) {
+        issues.push({
+          file: fileName, line: ln, category: "permission", severity: "error", pattern: "screencapture-no-permission-check",
+          message: "ScreenCaptureKit API used without screen capture permission check. Will fail silently or crash on first run.",
+          fix: "Call SCShareableContent.current to trigger the permission prompt, and check CGPreflightScreenCaptureAccess() before creating streams."
+        });
+      }
+    }
+
+    // 1b. AVCaptureSession without camera/mic permission
+    if (/AVCaptureSession|AVCaptureDevice\.default|AVCaptureDeviceInput/.test(trimmed)) {
+      if (!/AVCaptureDevice\.authorizationStatus|AVCaptureDevice\.requestAccess|AVAudioSession\.sharedInstance\(\)\.requestRecordPermission|NSCameraUsageDescription|NSMicrophoneUsageDescription/.test(allCode)) {
+        issues.push({
+          file: fileName, line: ln, category: "permission", severity: "error", pattern: "capture-no-permission-check",
+          message: "AVCaptureSession used without camera/microphone permission check. App will crash or show black screen.",
+          fix: "Check AVCaptureDevice.authorizationStatus(for:) before creating capture sessions. Add NSCameraUsageDescription and NSMicrophoneUsageDescription to Info.plist."
+        });
+      }
+    }
+
+    // 1c. CGWindowListCreateImage / CGDisplayStream without permission
+    if (/CGWindowListCreateImage|CGDisplayStream/.test(trimmed)) {
+      if (!/CGPreflightScreenCaptureAccess|CGRequestScreenCaptureAccess/.test(allCode)) {
+        issues.push({
+          file: fileName, line: ln, category: "permission", severity: "error", pattern: "cg-screen-no-permission",
+          message: "CGWindowList/CGDisplayStream used without screen recording permission check.",
+          fix: "Call CGPreflightScreenCaptureAccess() and CGRequestScreenCaptureAccess() before capturing."
+        });
+      }
+    }
+
+    // 1d. Input monitoring (CGEvent tap) without accessibility permission
+    if (/CGEvent\.tapCreate|CGEventTapCreate|AXIsProcessTrusted/.test(trimmed)) {
+      if (!/AXIsProcessTrustedWithOptions|AXIsProcessTrusted\(\)|kAXTrustedCheckOptionPrompt/.test(allCode)) {
+        issues.push({
+          file: fileName, line: ln, category: "permission", severity: "error", pattern: "input-monitoring-no-permission",
+          message: "CGEvent tap requires Accessibility permission. Will silently fail without it.",
+          fix: "Check AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt: true]) before creating event taps."
+        });
+      }
+    }
+
+    // 1e. FileManager access to protected directories without entitlement check
+    if (/NSOpenPanel|NSSavePanel|fileManager\.createFile|fileManager\.copyItem/.test(trimmed)) {
+      if (/Desktop|Documents|Downloads/.test(trimmed) && !/NSFileCoordinator|security-scoped|startAccessingSecurityScopedResource/.test(allCode)) {
+        // Only warn, since sandbox rules vary
+      }
+    }
+
+    // ════════════════════════════════════════════
+    // CATEGORY 2: Async State Machine / Termination
+    // ════════════════════════════════════════════
+
+    // 2a. AVAssetWriter.finishWriting without completion handling
+    if (/finishWriting\b/.test(trimmed)) {
+      if (/finishWriting\(\)/.test(trimmed)) {
+        issues.push({
+          file: fileName, line: ln, category: "async-state", severity: "error", pattern: "finish-writing-sync",
+          message: "finishWriting() called synchronously. This is deprecated and unreliable — the file may be incomplete.",
+          fix: "Use finishWriting(completionHandler:) or await finishWriting() to ensure the file is fully written before proceeding."
+        });
+      }
+    }
+
+    // 2b. State mutation without actor isolation in concurrent context
+    if (/Task\s*\{/.test(trimmed) || /Task\.detached\s*\{/.test(trimmed) || /DispatchQueue\.global/.test(trimmed)) {
+      const taskBody = lines.slice(i, Math.min(i + 15, lines.length)).join("\n");
+      // Check for direct state mutation without MainActor
+      if (/self\.\w+\s*=/.test(taskBody) && !/@MainActor/.test(taskBody) && !/await\s+MainActor/.test(taskBody) && !/DispatchQueue\.main/.test(taskBody)) {
+        issues.push({
+          file: fileName, line: ln, category: "async-state", severity: "error", pattern: "state-mutation-off-main",
+          message: "State mutation inside Task/background queue without @MainActor or MainActor.run. UI state updates from background threads cause crashes or silent corruption.",
+          fix: "Wrap UI state mutations in await MainActor.run { } or mark the enclosing method with @MainActor."
+        });
+      }
+    }
+
+    // 2c. SCStream without stopCapture in error/cleanup path
+    if (/SCStream\(/.test(trimmed) || /startCapture/.test(trimmed)) {
+      if (!/stopCapture/.test(allCode)) {
+        issues.push({
+          file: fileName, line: ln, category: "async-state", severity: "warning", pattern: "stream-no-stop",
+          message: "SCStream/capture started but stopCapture never called. Leaked capture sessions consume GPU and memory.",
+          fix: "Always call stopCapture() in deinit, error handlers, and cancellation paths."
+        });
+      }
+    }
+
+    // 2d. AVAssetWriter without checking status before appending
+    if (/appendSampleBuffer|append\(/.test(trimmed) && /writerInput|assetWriterInput/.test(context10)) {
+      if (!/isReadyForMoreMediaData|\.status\s*==/.test(context10)) {
+        issues.push({
+          file: fileName, line: ln, category: "async-state", severity: "warning", pattern: "writer-append-no-status-check",
+          message: "Appending to AVAssetWriter input without checking isReadyForMoreMediaData or writer status. Can silently drop frames or crash.",
+          fix: "Check writerInput.isReadyForMoreMediaData before appending, and verify writer.status == .writing."
+        });
+      }
+    }
+
+    // 2e. Task cancellation not handled
+    if (/Task\s*\{/.test(trimmed) && /await/.test(lines.slice(i, Math.min(i + 10, lines.length)).join("\n"))) {
+      const taskBody = lines.slice(i, Math.min(i + 15, lines.length)).join("\n");
+      if (/while\s+true|for\s+await/.test(taskBody) && !/Task\.isCancelled|checkCancellation|CancellationError/.test(taskBody)) {
+        issues.push({
+          file: fileName, line: ln, category: "async-state", severity: "warning", pattern: "task-no-cancellation",
+          message: "Long-running Task without cancellation check. Will continue running even after the view/object is deallocated.",
+          fix: "Add try Task.checkCancellation() in the loop body, or check Task.isCancelled to break out."
+        });
+      }
+    }
+
+    // 2f. Multiple writers/states without clear ownership
+    if (/isRecording\s*=/.test(trimmed) || /recordingState\s*=/.test(trimmed)) {
+      const contextWide = lines.slice(Math.max(0, i - 20), Math.min(lines.length, i + 20)).join("\n");
+      const mutations = (contextWide.match(/isRecording\s*=|recordingState\s*=/g) || []).length;
+      if (mutations >= 3) {
+        issues.push({
+          file: fileName, line: ln, category: "async-state", severity: "warning", pattern: "recording-state-multi-mutation",
+          message: `Recording state mutated ${mutations} times in nearby code. Ambiguous ownership — who decides the final state when start, stop, and error happen concurrently?`,
+          fix: "Use an actor or state machine enum (idle/starting/recording/stopping/error) with a single mutation point. Reject concurrent state transitions."
+        });
+      }
+    }
+
+    // ════════════════════════════════════════════
+    // CATEGORY 3: Time Domain
+    // ════════════════════════════════════════════
+
+    // 3a. Using Double/TimeInterval for media time instead of CMTime
+    if (/: TimeInterval|: Double/.test(trimmed) && /time|duration|offset|position|seek|current/.test(trimmed.toLowerCase())) {
+      if (/AVPlayer|AVAsset|CMSampleBuffer|SCStream|AVCaptureSession/.test(allCode)) {
+        issues.push({
+          file: fileName, line: ln, category: "time-domain", severity: "warning", pattern: "double-for-media-time",
+          message: "Using Double/TimeInterval for media time. Floating-point arithmetic causes drift — at 60fps, a Double can accumulate ~0.01s error per minute.",
+          fix: "Use CMTime (value/timescale rational) for all media timing. Convert to Double only at display boundaries."
+        });
+      }
+    }
+
+    // 3b. CMTime arithmetic without timescale unification
+    if (/CMTimeAdd|CMTimeSubtract|CMTimeMake/.test(trimmed)) {
+      const mathContext = lines.slice(i, Math.min(i + 3, lines.length)).join("\n");
+      if (/CMTimeMake\(.*,\s*\d+\).*CMTimeMake\(.*,\s*\d+\)/.test(mathContext)) {
+        // Check if different timescales
+        const timescales = [...mathContext.matchAll(/CMTimeMake\([^,]+,\s*(\d+)\)/g)].map(m => m[1]);
+        const unique = [...new Set(timescales)];
+        if (unique.length > 1) {
+          issues.push({
+            file: fileName, line: ln, category: "time-domain", severity: "error", pattern: "cmtime-mixed-timescale",
+            message: `CMTime arithmetic with mixed timescales (${unique.join(", ")}). This causes subtle timing drift and frame misalignment.`,
+            fix: "Use CMTimeConvertScale to unify timescales before arithmetic, or use a single project timescale throughout."
+          });
+        }
+      }
+    }
+
+    // 3c. Seeking without tolerance
+    if (/seek\(to:/.test(trimmed) && !/toleranceBefore|toleranceAfter/.test(trimmed)) {
+      issues.push({
+        file: fileName, line: ln, category: "time-domain", severity: "warning", pattern: "seek-without-tolerance",
+        message: "seek(to:) without tolerance parameters. AVPlayer may seek to nearest keyframe, which can be seconds away from the requested time.",
+        fix: "Use seek(to:toleranceBefore:toleranceAfter:) with .zero for frame-accurate seeking in editing contexts."
+      });
+    }
+
+    // 3d. Date/Date() used for media synchronization
+    if (/Date\(\)|Date\.now|CFAbsoluteTimeGetCurrent|mach_absolute_time/.test(trimmed)) {
+      if (/recording|capture|stream|sample|frame|render/.test(context10.toLowerCase())) {
+        issues.push({
+          file: fileName, line: ln, category: "time-domain", severity: "warning", pattern: "wall-clock-for-media-sync",
+          message: "Wall-clock time (Date/CFAbsoluteTime) used near media code. Wall clocks drift with NTP adjustments and sleep/wake. Media timestamps should use presentation timestamps from the capture pipeline.",
+          fix: "Use CMSampleBufferGetPresentationTimeStamp() or the sample buffer's PTS for synchronization, not wall clock."
+        });
+      }
+    }
+
+    // ════════════════════════════════════════════
+    // CATEGORY 4: Render Path Divergence
+    // ════════════════════════════════════════════
+
+    // 4a. Separate preview and export rendering
+    if (/func.*preview|func.*render.*preview|PreviewRenderer|previewImage/i.test(trimmed)) {
+      if (/func.*export|func.*render.*export|ExportRenderer|exportSession|AVAssetExportSession/i.test(allCode)) {
+        // Check if they share a common render function
+        const previewFuncs = [...allCode.matchAll(/func\s+(render|draw|compose|generate).*[Pp]review/g)].map(m => m[1]);
+        const exportFuncs = [...allCode.matchAll(/func\s+(render|draw|compose|generate).*[Ee]xport/g)].map(m => m[1]);
+        if (previewFuncs.length > 0 && exportFuncs.length > 0) {
+          issues.push({
+            file: fileName, line: ln, category: "render-divergence", severity: "error", pattern: "separate-preview-export-render",
+            message: "Separate render functions for preview and export. Users expect WYSIWYG — any difference in timing, compositing, or effects between preview and export is a bug.",
+            fix: "Use a single render path for both preview and export. Parameterize quality/resolution but keep the compositing logic identical. Consider a RenderEngine protocol with PreviewRenderer and ExportRenderer sharing the same composition model."
+          });
+        }
+      }
+    }
+
+    // 4b. Different image/graphics context for preview vs export
+    if (/UIGraphicsBeginImageContext|UIGraphicsImageRenderer|CGContext|CIContext/.test(trimmed)) {
+      if (/preview/i.test(context10) || /thumbnail/i.test(context10)) {
+        if (/export|final|output|write/i.test(allCode) && /UIGraphicsBeginImageContext|UIGraphicsImageRenderer|CGContext|CIContext/.test(allCode)) {
+          // Both preview and export use graphics contexts — potential divergence
+          issues.push({
+            file: fileName, line: ln, category: "render-divergence", severity: "warning", pattern: "graphics-context-divergence",
+            message: "Graphics context used in preview code. If export uses a different context type or settings (scale, colorSpace, antialiasing), output will differ from preview.",
+            fix: "Ensure both preview and export use the same CIContext/CGContext configuration. Share a single rendering function."
+          });
+        }
+      }
+    }
+
+    // 4c. CADisplayLink / Timer-based preview vs AVAsynchronousVideoCompositionRequest export
+    if (/CADisplayLink|displayLink/.test(trimmed)) {
+      if (/AVVideoCompositing|AVAsynchronousVideoCompositionRequest|AVMutableVideoComposition/.test(allCode)) {
+        issues.push({
+          file: fileName, line: ln, category: "render-divergence", severity: "warning", pattern: "displaylink-vs-composition",
+          message: "CADisplayLink used for preview alongside AVVideoCompositing for export. These are fundamentally different rendering clocks — preview is display-refresh driven, export is composition-request driven.",
+          fix: "Feed preview through the same composition pipeline as export. Use AVSynchronizedLayer or AVPlayerItemVideoOutput for preview to ensure identical frame timing."
+        });
+      }
+    }
+
+    // ════════════════════════════════════════════
+    // CATEGORY 5: Implicit Assumptions
+    // ════════════════════════════════════════════
+
+    // 5a. Hardcoded track index
+    if (/\.tracks\[0\]|\.tracks\[1\]|tracks\.first!/.test(trimmed)) {
+      issues.push({
+        file: fileName, line: ln, category: "implicit-assumption", severity: "error", pattern: "hardcoded-track-index",
+        message: "Hardcoded track index (tracks[0] or tracks[1]). Track order is NOT guaranteed — some files have audio as track 0, others have video. This will silently process the wrong track.",
+        fix: "Use asset.tracks(withMediaType: .video) or .audio to select tracks by type, never by index."
+      });
+    }
+
+    // 5b. Assuming window/screen count or order
+    if (/NSScreen\.screens\[0\]|NSScreen\.screens\.first!|CGMainDisplayID/.test(trimmed)) {
+      issues.push({
+        file: fileName, line: ln, category: "implicit-assumption", severity: "warning", pattern: "hardcoded-screen-index",
+        message: "Hardcoded screen reference. Screen order changes when displays are connected/disconnected, and the main display may not be screens[0].",
+        fix: "Use NSScreen.main for the primary screen, or let the user select a display explicitly."
+      });
+    }
+
+    // 5c. Assuming audio channel count or sample rate
+    if (/channelCount\s*==?\s*2|sampleRate\s*==?\s*44100|sampleRate\s*==?\s*48000/.test(trimmed)) {
+      issues.push({
+        file: fileName, line: ln, category: "implicit-assumption", severity: "warning", pattern: "hardcoded-audio-params",
+        message: "Hardcoded audio channel count or sample rate. Real-world audio varies (mono mic, multi-channel interfaces, 44.1k vs 48k vs 96k).",
+        fix: "Read channelCount and sampleRate from the source asset's audio format description. Convert sample rate with AVAudioConverter if needed."
+      });
+    }
+
+    // 5d. Assuming video is always 30/60fps
+    if (/frameDuration.*CMTimeMake\(\s*1\s*,\s*(30|60)\s*\)|fps\s*=\s*(30|60)/.test(trimmed)) {
+      issues.push({
+        file: fileName, line: ln, category: "implicit-assumption", severity: "warning", pattern: "hardcoded-fps",
+        message: "Hardcoded frame rate. Screen recordings may be variable frame rate; camera input varies by device and mode.",
+        fix: "Read nominalFrameRate from the video track, or use CMSampleBuffer timestamps for variable-rate content."
+      });
+    }
+
+    // 5e. Force-unwrapping optional media resources
+    if (/AVAsset.*\.tracks.*!|\.tracks\(withMediaType.*\)\.first!|CMSampleBufferGetImageBuffer.*!/.test(trimmed)) {
+      issues.push({
+        file: fileName, line: ln, category: "implicit-assumption", severity: "error", pattern: "force-unwrap-media",
+        message: "Force-unwrapping media resource. Media assets can have missing tracks, corrupted frames, or empty buffers. Force-unwrap will crash at runtime.",
+        fix: "Use guard let / if let and handle the nil case with proper error reporting."
+      });
+    }
+
+    // 5f. Not checking asset.isPlayable / isExportable / isReadable
+    if (/AVURLAsset\(|AVAsset\(/.test(trimmed)) {
+      const usageContext = lines.slice(i, Math.min(i + 10, lines.length)).join("\n");
+      if (!/isPlayable|isExportable|isReadable|loadValuesAsynchronously|load\(\.isPlayable/.test(usageContext)) {
+        issues.push({
+          file: fileName, line: ln, category: "implicit-assumption", severity: "warning", pattern: "asset-no-capability-check",
+          message: "AVAsset created without checking isPlayable/isExportable. DRM-protected or corrupted files will fail silently downstream.",
+          fix: "Load and check isPlayable/isExportable before processing. Use asset.load(.isPlayable) for async validation."
+        });
+      }
+    }
+
+    // 5g. Assuming cursor position / input coordinates without screen scaling
+    if (/NSEvent\.mouseLocation|CGEvent.*\.location|cursorPosition/.test(trimmed)) {
+      if (!/backingScaleFactor|NSScreen\.main.*scale|convertPoint/.test(context10)) {
+        issues.push({
+          file: fileName, line: ln, category: "implicit-assumption", severity: "warning", pattern: "cursor-no-scale-conversion",
+          message: "Mouse/cursor position used without screen scale conversion. On Retina displays, point coordinates and pixel coordinates differ by 2x.",
+          fix: "Multiply by NSScreen.main?.backingScaleFactor or use convertPoint(fromScreen:) for proper coordinate mapping."
+        });
+      }
+    }
+  }
+
+  // File-level checks
+
+  // Permission: Info.plist keys check
+  if (/ScreenCaptureKit|SCStream/.test(allCode) || /AVCaptureDevice|AVCaptureSession/.test(allCode)) {
+    // Check for graceful degradation
+    if (!/showPermissionDenied|permissionDenied|noPermission|requestAccess.*denied|catch.*permission|alert.*permission/i.test(allCode)) {
+      issues.push({
+        file: fileName, line: 1, category: "permission", severity: "warning", pattern: "no-permission-denied-handling",
+        message: "Media capture API used but no permission-denied UI handling found. When the user denies permission, the app should show a helpful message, not just silently fail.",
+        fix: "Add a permission denied state with UI that explains what permission is needed and links to System Settings."
+      });
+    }
+  }
+
+  return issues;
+}
+
+server.tool(
+  "swift_deep_verify",
+  "Detect architectural issues in media/recording/capture apps: missing permission checks (ScreenCaptureKit, camera, mic, accessibility), async state machine bugs (AVAssetWriter, concurrent state, cancellation), time-domain errors (CMTime misuse, mixed timescales, wall-clock sync), preview/export render divergence, and implicit assumptions (hardcoded track order, fps, screen index). Use on any project using AVFoundation, ScreenCaptureKit, CoreMedia, or real-time capture.",
+  { path: z.string().describe("Project root path"), files: z.array(z.string()).optional().describe("Specific .swift files to check. If empty, scans all .swift files.") },
+  async ({ path: projectPath, files }) => {
+    const root = resolve(projectPath);
+
+    let swiftFiles: string[] = [];
+    if (files && files.length > 0) {
+      swiftFiles = files.map(f => isAbsolute(f) ? f : join(root, f));
+    } else {
+      try {
+        const { stdout } = await exec("find", [root, "-name", "*.swift", "-not", "-path", "*/.build/*", "-not", "-path", "*/DerivedData/*"], { maxBuffer: 2 * 1024 * 1024 });
+        swiftFiles = stdout.trim().split("\n").filter(Boolean);
+      } catch { /* empty */ }
+    }
+
+    swiftFiles = [...new Set(swiftFiles.map(f => f.replace(/^\/private/, "")))];
+
+    if (swiftFiles.length === 0) {
+      return json({ success: true, issueCount: 0, issues: [], suggestion: "No .swift files found." });
+    }
+
+    const allIssues: DeepIssue[] = [];
+    for (const file of swiftFiles) {
+      try {
+        const content = await readFile(file, "utf-8");
+        allIssues.push(...detectDeepIssues(relative(root, file), content));
+      } catch { /* skip */ }
+    }
+
+    // Categorize
+    const byCategory: Record<string, DeepIssue[]> = {};
+    for (const issue of allIssues) {
+      (byCategory[issue.category] ??= []).push(issue);
+    }
+
+    const errors = allIssues.filter(i => i.severity === "error");
+    const warnings = allIssues.filter(i => i.severity === "warning");
+
+    const categoryLabels: Record<string, string> = {
+      "permission": "Permission/Environment",
+      "async-state": "Async State Machine",
+      "time-domain": "Time Domain",
+      "render-divergence": "Render Path Divergence",
+      "implicit-assumption": "Implicit Assumption"
+    };
+
+    const result: any = {
+      success: errors.length === 0,
+      filesScanned: swiftFiles.length,
+      issueCount: allIssues.length,
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      byCategory: Object.fromEntries(
+        Object.entries(byCategory).map(([cat, issues]) => [
+          categoryLabels[cat] || cat,
+          { count: issues.length, errors: issues.filter(i => i.severity === "error").length, issues }
+        ])
+      ),
+      issues: allIssues,
+    };
+
+    if (errors.length > 0) {
+      const errorCats = [...new Set(errors.map(e => categoryLabels[e.category] || e.category))];
+      result.suggestion = `Found ${errors.length} critical issue(s) in: ${errorCats.join(", ")}. These will cause runtime failures, data corruption, or silent bugs even though the code compiles. Fix before testing on device.`;
+    } else if (warnings.length > 0) {
+      result.suggestion = `No critical issues, but ${warnings.length} warning(s) found. Common in media apps — review time-domain and implicit-assumption warnings carefully.`;
+    } else {
+      result.suggestion = "No deep architectural issues detected. Run swift_behavior_verify for UI-level checks and swift_runtime_check for visual verification.";
+    }
+
+    return json(result);
+  }
+);
+
 // ── Runtime Check: simulator screenshot + UI validation ──
 
 server.tool(
