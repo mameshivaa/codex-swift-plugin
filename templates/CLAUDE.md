@@ -14,15 +14,18 @@ cd .agents/plugins/codex-swift && npm run build
 ## Workflow
 
 1. **First**: Run `swift_project_describe` to understand the project structure.
-2. **Editing**: After every `.swift` file edit, run `swift_diagnostics` on the changed files.
-3. **Fixing**: If diagnostics fail, use `swift_verify` then `swift_repair_plan` to get a structured fix plan.
-4. **Testing**: Run `swift_test` after fixes. Write tests with Swift Testing (`@Test` macro).
-5. **Quality**: Run `swift_format` and `swift_lint` on changed files before finishing.
+2. **After every edit, triple-check**:
+   - `swift_diagnostics` — does it compile?
+   - `swift_behavior_verify` — does it actually work? (empty actions, broken navigation, unused state)
+   - `swift_intent_check` with the user's request — does it do what was asked?
+3. **Fixing**: If diagnostics fail, use `swift_verify` then `swift_repair_plan`.
+4. **Visual check**: Use `swift_runtime_check` to launch on simulator and capture a screenshot.
+5. **Quality**: Run `swift_format` and `swift_lint` before finishing.
 
 ## Rules
 
 - Use `swift_diagnostics` (SourceKit-LSP, ~1s) instead of running `swift build` in a shell.
-- Use `swift_build --stop-after typecheck` for fast cross-file validation.
+- **Always run `swift_behavior_verify` after generating code** — code that compiles isn't necessarily correct.
+- **Always run `swift_intent_check` before presenting results** — verify the code fulfills the user's request.
 - Use `swift_package_search` to find packages instead of guessing names.
-- Use `swift_xcode_info` for Xcode project details (schemes, signing, destinations).
-- Follow the repair execution queue from `swift_repair_plan` when fixing build errors.
+- Use `swift_xcode_info` for Xcode project details.

@@ -15,7 +15,12 @@ Use the swift-toolchain tools whenever you:
 
 **Diagnosing problems** -- start here, not with `swift build` in a shell:
 - `swift_diagnostics` -- SourceKit-LSP diagnostics in ~1s. Pass specific file paths for LSP mode. Pass empty array for full-project build-based diagnostics.
+- `swift_behavior_verify` -- **catches bugs the compiler misses**: empty button actions, unused @State, missing @Published, broken navigation, placeholder data, deprecated patterns. Run this after every code generation.
+- `swift_intent_check` -- **verifies code fulfills the user's request**: pass the user's intent in natural language, get back a checklist of missing features. Catches "compiles but doesn't do what was asked" problems.
 - `swift_verify` -- staged verification (diagnostics -> typecheck -> build -> test). Use after edits to confirm correctness at every level.
+
+**Visual verification:**
+- `swift_runtime_check` -- build, launch on simulator, capture screenshot. Use to verify the app actually looks correct, not just that it compiles.
 
 **Fixing problems:**
 - `swift_repair_plan` -- feed a failed `swift_verify` result to get a source-aware repair plan with an execution queue.
@@ -45,20 +50,27 @@ Use the swift-toolchain tools whenever you:
 
 ## Verification order (fastest feedback first)
 
-After every Swift file edit, verify in this order. Stop at the first failure and fix it before proceeding:
+After every Swift file edit, run this triple-check. **All three are required** — code that passes step 1 often fails step 2 or 3:
 
-1. `swift_diagnostics` with specific files (SourceKit-LSP, ~1s)
-2. `swift_build` with `stopAfter: "typecheck"` (cross-file, ~seconds)
-3. `swift_build` (full compile)
-4. `swift_test` (runtime correctness)
-5. `swift_preview` / `swift_simulator_run` (visual/runtime)
+1. `swift_diagnostics` with specific files (SourceKit-LSP, ~1s) — **does it compile?**
+2. `swift_behavior_verify` on changed files — **does it actually work?** (empty actions, broken navigation, unused state)
+3. `swift_intent_check` with the user's request — **does it do what was asked?**
 
-Or use `swift_verify` which runs this cascade automatically and returns a repair plan on failure.
+Then, as needed:
+4. `swift_build` with `stopAfter: "typecheck"` (cross-file, ~seconds)
+5. `swift_build` (full compile)
+6. `swift_test` (runtime correctness)
+7. `swift_runtime_check` (visual verification via simulator screenshot)
+
+Or use `swift_verify` which runs the build cascade automatically and returns a repair plan on failure.
 
 ## Rules
 
-- **Never run raw `swift build` or `swift test` in a shell** when these MCP tools are available. The tools provide structured output, error locations, and actionable suggestions.
-- **Always call `swift_project_describe` first** when you enter an unfamiliar Swift project. It tells you what tools are available and how the project is configured.
-- **Use `swift_diagnostics` for the edit-verify loop**, not full builds. LSP mode is 10x faster than a full build for single-file changes.
-- **Follow the repair queue** when `swift_verify` fails. The queue tells you exactly what to inspect, edit, and verify.
-- **Run `swift_format` and `swift_lint` on changed files** before presenting results to the user.
+- **Never run raw `swift build` or `swift test` in a shell** when these MCP tools are available.
+- **Always call `swift_project_describe` first** when you enter an unfamiliar Swift project.
+- **Use `swift_diagnostics` for the edit-verify loop**, not full builds.
+- **Always run `swift_behavior_verify` after generating code** — compiling is not enough. Empty button actions, EmptyView destinations, and .constant() bindings are the most common vibe-coding failures.
+- **Always run `swift_intent_check` before presenting results** — verify the code actually fulfills the user's request. Don't deliver code that compiles but is missing features the user asked for.
+- **Follow the repair queue** when `swift_verify` fails.
+- **Run `swift_format` and `swift_lint` on changed files** before presenting results.
+- **Use `swift_runtime_check`** when the user asks to see the app or when you need to verify visual layout.

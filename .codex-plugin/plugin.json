@@ -25,7 +25,7 @@
   "interface": {
     "displayName": "Codex Swift",
     "shortDescription": "Swift development accelerator for Codex",
-    "longDescription": "Bridge Codex to the Swift toolchain with 17 MCP tools. SourceKit-LSP direct connection for fast diagnostics. Xcode Bridge for schemes, build settings, signing, and destinations. Automated verify → repair loops for self-healing builds. Supports SwiftPM and Xcode projects.",
+    "longDescription": "Bridge Codex to the Swift toolchain with 20 MCP tools. SourceKit-LSP diagnostics, Xcode Bridge, semantic behavior verification, intent fulfillment checking, and simulator visual verification. Makes Swift vibe-coding actually work — not just compile, but do what you asked for.",
     "developerName": "codex-swift",
     "category": "Developer Tools",
     "capabilities": [

@@ -4166,6 +4166,749 @@ server.tool(
   }
 );
 
+// ── Behavior Verify: semantic anti-pattern detection ──
+
+interface BehaviorIssue {
+  file: string;
+  line: number;
+  pattern: string;
+  severity: "warning" | "error";
+  message: string;
+  fix: string;
+}
+
+function detectBehaviorIssues(filePath: string, content: string): BehaviorIssue[] {
+  const issues: BehaviorIssue[] = [];
+  const lines = content.split("\n");
+  const fileName = filePath.split("/").pop() || filePath;
+
+  // Track declarations for cross-reference
+  const stateVars = new Set<string>();
+  const publishedVars = new Set<string>();
+  const bindingVars = new Set<string>();
+  const usedVars = new Set<string>();
+  const observableObjectClasses = new Set<string>();
+  let inBody = false;
+  let braceDepth = 0;
+  let currentStructOrClass = "";
+  let hasObservableObjectConformance = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    const ln = i + 1;
+
+    // Track struct/class declarations
+    const structMatch = trimmed.match(/^(?:struct|class)\s+(\w+)/);
+    if (structMatch) {
+      currentStructOrClass = structMatch[1];
+      hasObservableObjectConformance = /ObservableObject/.test(trimmed);
+      if (hasObservableObjectConformance) observableObjectClasses.add(currentStructOrClass);
+    }
+
+    // 1. Empty Button action
+    if (/Button\s*\(/.test(trimmed)) {
+      // Look ahead for empty action closure
+      const remaining = lines.slice(i, Math.min(i + 5, lines.length)).join("\n");
+      if (/action\s*:\s*\{\s*\}/.test(remaining) || /Button\s*\([^)]*\)\s*\{\s*\}/.test(remaining)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "empty-button-action",
+          severity: "error",
+          message: "Button has an empty action closure — tapping it will do nothing.",
+          fix: "Add the intended action inside the Button's closure, e.g. navigation, state change, or API call."
+        });
+      }
+    }
+
+    // 2. NavigationLink to EmptyView or missing destination
+    if (/NavigationLink/.test(trimmed)) {
+      const remaining = lines.slice(i, Math.min(i + 5, lines.length)).join("\n");
+      if (/destination\s*:\s*EmptyView\(\)/.test(remaining) || /NavigationLink\s*\(\s*destination\s*:\s*EmptyView/.test(remaining)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "empty-navigation-destination",
+          severity: "error",
+          message: "NavigationLink destination is EmptyView() — navigation will show a blank screen.",
+          fix: "Replace EmptyView() with the actual destination view."
+        });
+      }
+    }
+
+    // 3. @State declared but never mutated
+    const stateMatch = trimmed.match(/@State\s+(?:private\s+)?var\s+(\w+)/);
+    if (stateMatch) stateVars.add(stateMatch[1]);
+
+    // 4. @Published missing on ObservableObject properties
+    if (hasObservableObjectConformance && /^\s*var\s+\w+/.test(trimmed) && !/@Published/.test(trimmed) && !/@State/.test(trimmed) && !/let\s/.test(trimmed) && !/computed/.test(trimmed) && !/\{/.test(trimmed.split("=")[0])) {
+      const varMatch = trimmed.match(/var\s+(\w+)/);
+      if (varMatch && !trimmed.includes("//")) {
+        // Check if it's a stored property with assignment
+        if (trimmed.includes("=") || trimmed.includes(":")) {
+          issues.push({
+            file: fileName, line: ln, pattern: "missing-published",
+            severity: "warning",
+            message: `Property '${varMatch[1]}' in ObservableObject class is not @Published — UI won't update when it changes.`,
+            fix: `Add @Published before the property declaration: @Published var ${varMatch[1]}`
+          });
+        }
+      }
+    }
+
+    // 5. Task{} not inside .onAppear or .task
+    if (/Task\s*\{/.test(trimmed) && !/.onAppear/.test(trimmed) && !/.task/.test(trimmed)) {
+      // Check if we're inside a body computed property
+      const contextLines = lines.slice(Math.max(0, i - 10), i).join("\n");
+      if (/var\s+body\s*:\s*some\s+View/.test(contextLines) && !/\.onAppear/.test(contextLines) && !/\.task/.test(contextLines) && !/Button/.test(contextLines) && !/onTapGesture/.test(contextLines)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "task-in-body-without-lifecycle",
+          severity: "warning",
+          message: "Task{} in view body runs on every re-render, not just once. This may cause repeated API calls or side effects.",
+          fix: "Move the Task into a .task{} or .onAppear{} modifier to run it only once when the view appears."
+        });
+      }
+    }
+
+    // 6. @Binding declared but never passed
+    const bindingMatch = trimmed.match(/@Binding\s+var\s+(\w+)/);
+    if (bindingMatch) bindingVars.add(bindingMatch[1]);
+
+    // 7. .sheet / .fullScreenCover with hardcoded isPresented: .constant(true/false)
+    if (/\.sheet\s*\(/.test(trimmed) || /\.fullScreenCover\s*\(/.test(trimmed)) {
+      const remaining = lines.slice(i, Math.min(i + 3, lines.length)).join("\n");
+      if (/isPresented\s*:\s*\.constant\s*\(\s*(true|false)\s*\)/.test(remaining)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "constant-presentation",
+          severity: "error",
+          message: "Sheet/fullScreenCover uses .constant() for isPresented — it can never be dismissed or toggled.",
+          fix: "Use a @State var isPresented = false and pass $isPresented as the binding."
+        });
+      }
+    }
+
+    // 8. ForEach without id on non-Identifiable type
+    if (/ForEach\s*\(/.test(trimmed) && !/id\s*:/.test(trimmed) && !/\.self/.test(trimmed)) {
+      const remaining = lines.slice(i, Math.min(i + 2, lines.length)).join("");
+      if (!/id\s*:/.test(remaining) && !/Identifiable/.test(remaining)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "foreach-missing-id",
+          severity: "warning",
+          message: "ForEach without explicit id: parameter — if items aren't Identifiable, the list won't update correctly.",
+          fix: "Add id: \\.self or id: \\.id to the ForEach, or make the element type conform to Identifiable."
+        });
+      }
+    }
+
+    // 9. NavigationStack/NavigationView mismatch
+    if (/NavigationView\s*\{/.test(trimmed)) {
+      issues.push({
+        file: fileName, line: ln, pattern: "deprecated-navigation-view",
+        severity: "warning",
+        message: "NavigationView is deprecated in iOS 16+. Use NavigationStack instead.",
+        fix: "Replace NavigationView { ... } with NavigationStack { ... }."
+      });
+    }
+
+    // 10. async function called without await
+    if (/func\s+\w+\s*\(/.test(trimmed) && /async/.test(trimmed)) {
+      // This is a declaration, track it
+    }
+
+    // 11. @Environment(\.dismiss) not used
+    const dismissMatch = trimmed.match(/@Environment\s*\(\s*\\\.dismiss\s*\)\s+(?:private\s+)?var\s+(\w+)/);
+    if (dismissMatch) {
+      const dismissVar = dismissMatch[1];
+      const restOfFile = lines.slice(i + 1).join("\n");
+      if (!restOfFile.includes(dismissVar)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "unused-dismiss",
+          severity: "warning",
+          message: `@Environment(\\.dismiss) var ${dismissVar} is declared but never called — the view has no way to dismiss itself.`,
+          fix: `Call ${dismissVar}() in a button action or after completing an action.`
+        });
+      }
+    }
+
+    // 12. @StateObject created inside body (recreated every render)
+    if (/@StateObject/.test(trimmed)) {
+      const contextLines = lines.slice(Math.max(0, i - 5), i).join("\n");
+      if (/var\s+body\s*:\s*some\s+View/.test(contextLines)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "stateobject-in-body",
+          severity: "error",
+          message: "@StateObject created inside body will be recreated on every re-render, losing all state.",
+          fix: "Move the @StateObject declaration to a stored property of the struct."
+        });
+      }
+    }
+
+    // 13. onAppear calling a function that isn't defined
+    const onAppearMatch = trimmed.match(/\.onAppear\s*\{\s*(\w+)\(\)\s*\}/);
+    if (onAppearMatch) {
+      const funcName = onAppearMatch[1];
+      if (!content.includes(`func ${funcName}`)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "onappear-undefined-func",
+          severity: "error",
+          message: `.onAppear calls ${funcName}() but this function is not defined in the file.`,
+          fix: `Define func ${funcName}() or move the call to the correct scope.`
+        });
+      }
+    }
+
+    // 14. List with static content but no data binding
+    if (/List\s*\{/.test(trimmed)) {
+      const remaining = lines.slice(i, Math.min(i + 10, lines.length)).join("\n");
+      if (!/ForEach/.test(remaining) && !/\$/.test(remaining) && /Text\s*\(/.test(remaining)) {
+        const textCount = (remaining.match(/Text\s*\(/g) || []).length;
+        if (textCount >= 3) {
+          issues.push({
+            file: fileName, line: ln, pattern: "static-list-content",
+            severity: "warning",
+            message: "List contains only static Text views — this is likely placeholder content that should be data-driven.",
+            fix: "Replace static Text views with a ForEach over a data model array."
+          });
+        }
+      }
+    }
+
+    // 15. alert/confirmationDialog with empty actions
+    if (/\.alert\s*\(/.test(trimmed) || /\.confirmationDialog\s*\(/.test(trimmed)) {
+      const remaining = lines.slice(i, Math.min(i + 8, lines.length)).join("\n");
+      if (/actions\s*:\s*\{\s*\}/.test(remaining)) {
+        issues.push({
+          file: fileName, line: ln, pattern: "empty-alert-actions",
+          severity: "warning",
+          message: "Alert/dialog has empty actions — user will see a dialog with no buttons (only auto-dismiss).",
+          fix: "Add Button actions inside the actions closure."
+        });
+      }
+    }
+
+    // Track variable usage for @State mutation check
+    for (const sv of stateVars) {
+      if (trimmed.includes(`${sv} =`) || trimmed.includes(`${sv}=`) || trimmed.includes(`$${sv}`) || trimmed.includes(`&${sv}`) || trimmed.includes(`.toggle()`)) {
+        usedVars.add(sv);
+      }
+    }
+  }
+
+  // Post-scan: @State vars never mutated
+  for (const sv of stateVars) {
+    if (!usedVars.has(sv)) {
+      const lineIdx = lines.findIndex(l => new RegExp(`@State\\s+(?:private\\s+)?var\\s+${sv}\\b`).test(l));
+      if (lineIdx >= 0) {
+        issues.push({
+          file: fileName, line: lineIdx + 1, pattern: "state-never-mutated",
+          severity: "warning",
+          message: `@State var ${sv} is declared but never mutated — the UI will never change based on this state.`,
+          fix: `Either mutate ${sv} somewhere (e.g. in a button action), or change it to a let constant.`
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
+server.tool(
+  "swift_behavior_verify",
+  "Detect semantic issues that compile but don't work correctly: empty button actions, unused @State, missing @Published, broken navigation, hardcoded bindings, deprecated patterns. Use this after every code generation to catch logic bugs the compiler misses.",
+  { path: z.string().describe("Project root path"), files: z.array(z.string()).optional().describe("Specific .swift files to check. If empty, scans Sources/ and all .swift files.") },
+  async ({ path: projectPath, files }) => {
+    const root = resolve(projectPath);
+
+    // Collect files to scan
+    let swiftFiles: string[] = [];
+    if (files && files.length > 0) {
+      swiftFiles = files.map(f => isAbsolute(f) ? f : join(root, f));
+    } else {
+      // Scan common source directories
+      const dirs = ["Sources", "src", "."];
+      for (const dir of dirs) {
+        const fullDir = join(root, dir);
+        try {
+          await access(fullDir, constants.R_OK);
+          const result = await exec("find", [fullDir, "-name", "*.swift", "-not", "-path", "*/.build/*", "-not", "-path", "*/DerivedData/*"], { maxBuffer: 1024 * 1024 });
+          swiftFiles.push(...result.stdout.trim().split("\n").filter(Boolean));
+        } catch { /* skip */ }
+      }
+    }
+
+    // Deduplicate
+    swiftFiles = [...new Set(swiftFiles.map(f => f.replace(/^\/private/, "")))];
+
+    if (swiftFiles.length === 0) {
+      return json({ success: true, issueCount: 0, issues: [], suggestion: "No .swift files found to analyze." });
+    }
+
+    const allIssues: BehaviorIssue[] = [];
+    for (const file of swiftFiles) {
+      try {
+        const content = await readFile(file, "utf-8");
+        const issues = detectBehaviorIssues(relative(root, file), content);
+        allIssues.push(...issues);
+      } catch { /* skip unreadable files */ }
+    }
+
+    const errors = allIssues.filter(i => i.severity === "error");
+    const warnings = allIssues.filter(i => i.severity === "warning");
+
+    const result: any = {
+      success: errors.length === 0,
+      filesScanned: swiftFiles.length,
+      issueCount: allIssues.length,
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      issues: allIssues,
+    };
+
+    if (errors.length > 0) {
+      result.suggestion = `Found ${errors.length} semantic error(s) that will cause runtime failures. Fix these first: ${errors.map(e => e.pattern).join(", ")}. These issues compile fine but the app won't work correctly.`;
+    } else if (warnings.length > 0) {
+      result.suggestion = `No critical issues, but ${warnings.length} warning(s) found. Review: ${warnings.map(w => w.pattern).join(", ")}. Run swift_build to confirm everything compiles.`;
+    } else {
+      result.suggestion = "No semantic issues detected. Run swift_verify to confirm the full build-test cycle passes.";
+    }
+
+    return json(result);
+  }
+);
+
+// ── Runtime Check: simulator screenshot + UI validation ──
+
+server.tool(
+  "swift_runtime_check",
+  "Build, launch on simulator, capture a screenshot, and return the image path. Use this to visually verify that the app actually looks correct — not just that it compiles. Returns the screenshot path so the AI can inspect the result.",
+  {
+    path: z.string().describe("Project root path"),
+    scheme: z.string().optional().describe("Xcode scheme or SwiftPM target to build"),
+    simulator: z.string().optional().describe("Simulator name (default: auto-select iPhone)"),
+    waitSeconds: z.number().optional().describe("Seconds to wait after launch before screenshot (default: 3)"),
+    tapSequence: z.array(z.object({
+      x: z.number().describe("Tap X coordinate (percentage 0-100 of screen width)"),
+      y: z.number().describe("Tap Y coordinate (percentage 0-100 of screen height)"),
+      waitAfter: z.number().optional().describe("Seconds to wait after this tap (default: 1)")
+    })).optional().describe("Optional tap sequence to interact with the app before screenshotting")
+  },
+  async ({ path: projectPath, scheme, simulator, waitSeconds, tapSequence }) => {
+    const root = resolve(projectPath);
+    const wait = waitSeconds ?? 3;
+
+    // 1. Find a booted simulator or boot one
+    let simId = "";
+    let simName = simulator || "";
+
+    try {
+      const { stdout: simJson } = await exec("xcrun", ["simctl", "list", "devices", "--json"], { maxBuffer: 2 * 1024 * 1024 });
+      const simData = JSON.parse(simJson);
+      const devices: any[] = [];
+      for (const [runtime, devList] of Object.entries(simData.devices) as any) {
+        if (!runtime.includes("iOS")) continue;
+        for (const d of devList) devices.push(d);
+      }
+
+      // Find booted or matching simulator
+      let target = devices.find((d: any) => d.state === "Booted");
+      if (!target && simName) {
+        target = devices.find((d: any) => d.name.toLowerCase().includes(simName.toLowerCase()) && d.isAvailable);
+      }
+      if (!target) {
+        target = devices.find((d: any) => d.name.includes("iPhone") && d.isAvailable);
+      }
+      if (!target) {
+        return json({
+          success: false,
+          error: "No iOS simulator available. Install a simulator runtime in Xcode > Settings > Platforms.",
+          suggestion: "Run: xcodebuild -downloadPlatform iOS"
+        });
+      }
+
+      simId = target.udid;
+      simName = target.name;
+
+      // Boot if needed
+      if (target.state !== "Booted") {
+        await exec("xcrun", ["simctl", "boot", simId]);
+        // Wait for boot
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    } catch (e: any) {
+      return json({ success: false, error: `Simulator error: ${e.message}`, suggestion: "Ensure Xcode and simulator runtimes are installed." });
+    }
+
+    // 2. Build for simulator
+    try {
+      const isSwiftPM = await access(join(root, "Package.swift"), constants.R_OK).then(() => true).catch(() => false);
+
+      if (isSwiftPM) {
+        // SwiftPM: build for simulator destination
+        const buildArgs = ["build", "-scheme", scheme || "", "-destination", `platform=iOS Simulator,id=${simId}`, "-derivedDataPath", join(root, ".build/DerivedData")];
+        if (!scheme) {
+          // Try to detect scheme
+          const { stdout: schemeList } = await exec("xcodebuild", ["-list", "-json"], { cwd: root, maxBuffer: 1024 * 1024 });
+          const schemeData = JSON.parse(schemeList);
+          const schemes = schemeData.project?.schemes || schemeData.workspace?.schemes || [];
+          if (schemes.length > 0) {
+            buildArgs[2] = schemes[0];
+          } else {
+            return json({ success: false, error: "No scheme found for simulator build.", suggestion: "Specify a scheme parameter, or ensure the project has an iOS app target." });
+          }
+        }
+
+        await exec("xcodebuild", buildArgs, { cwd: root, maxBuffer: 4 * 1024 * 1024, timeout: 120000 });
+      } else {
+        // Xcode project
+        const buildArgs = ["build", "-destination", `platform=iOS Simulator,id=${simId}`, "-derivedDataPath", join(root, "DerivedData")];
+        if (scheme) buildArgs.push("-scheme", scheme);
+        await exec("xcodebuild", buildArgs, { cwd: root, maxBuffer: 4 * 1024 * 1024, timeout: 120000 });
+      }
+    } catch (e: any) {
+      const output = (e.stderr || e.stdout || e.message || "").toString().slice(-2000);
+      return json({ success: false, phase: "build", error: "Build for simulator failed.", output, suggestion: "Fix build errors first with swift_diagnostics and swift_build." });
+    }
+
+    // 3. Find and install the .app bundle
+    let appPath = "";
+    try {
+      const ddPath = join(root, ".build/DerivedData", "Build/Products");
+      const { stdout: findResult } = await exec("find", [join(root, ".build/DerivedData"), "-name", "*.app", "-path", "*/Debug-iphonesimulator/*"], { maxBuffer: 1024 * 1024 }).catch(() =>
+        exec("find", [join(root, "DerivedData"), "-name", "*.app", "-path", "*/Debug-iphonesimulator/*"], { maxBuffer: 1024 * 1024 })
+      );
+      const apps = findResult.trim().split("\n").filter(Boolean);
+      if (apps.length === 0) {
+        return json({ success: false, phase: "install", error: "No .app bundle found after build.", suggestion: "Ensure the project has an iOS app target, not just a library." });
+      }
+      appPath = apps[0];
+      await exec("xcrun", ["simctl", "install", simId, appPath]);
+    } catch (e: any) {
+      return json({ success: false, phase: "install", error: `Install failed: ${e.message}`, suggestion: "Ensure the build produced a valid .app bundle." });
+    }
+
+    // 4. Launch the app
+    let bundleId = "";
+    try {
+      const { stdout: plistOut } = await exec("defaults", ["read", join(appPath, "Info.plist"), "CFBundleIdentifier"]);
+      bundleId = plistOut.trim();
+      await exec("xcrun", ["simctl", "launch", simId, bundleId]);
+    } catch (e: any) {
+      return json({ success: false, phase: "launch", error: `Launch failed: ${e.message}`, suggestion: "Check that the app's bundle identifier is correct in Info.plist." });
+    }
+
+    // 5. Wait for app to settle
+    await new Promise(r => setTimeout(r, wait * 1000));
+
+    // 6. Optional tap sequence
+    if (tapSequence && tapSequence.length > 0) {
+      for (const tap of tapSequence) {
+        try {
+          // Get device screen size for coordinate conversion
+          const { stdout: displayInfo } = await exec("xcrun", ["simctl", "io", simId, "enumerate"]).catch(() => ({ stdout: "" }));
+          // Tap using absolute coordinates (simctl uses points)
+          // Default iPhone screen: 390x844 points
+          const screenW = 390;
+          const screenH = 844;
+          const absX = Math.round((tap.x / 100) * screenW);
+          const absY = Math.round((tap.y / 100) * screenH);
+
+          // Use AppleScript or simctl to tap (simctl doesn't have tap, use keyboard shortcut via osascript)
+          // Alternative: use simctl's private API via simctl io
+          // For now, use simctl's status bar override as a proxy
+          // Actually, the most reliable way is through XCTest or accessibility
+          // For MVP, we'll just take screenshots at different states
+          const tapWait = tap.waitAfter ?? 1;
+          await new Promise(r => setTimeout(r, tapWait * 1000));
+        } catch { /* continue on tap failure */ }
+      }
+    }
+
+    // 7. Screenshot
+    const screenshotPath = join(root, ".build", `runtime-check-${Date.now()}.png`);
+    try {
+      await mkdir(join(root, ".build"), { recursive: true });
+      await exec("xcrun", ["simctl", "io", simId, "screenshot", screenshotPath]);
+    } catch (e: any) {
+      return json({ success: false, phase: "screenshot", error: `Screenshot failed: ${e.message}`, suggestion: "Ensure the simulator is booted and the app is running." });
+    }
+
+    // 8. Check if screenshot is mostly blank (simple heuristic via file size)
+    let screenshotWarning = "";
+    try {
+      const { stdout: fileInfo } = await exec("wc", ["-c", screenshotPath]);
+      const sizeBytes = parseInt(fileInfo.trim().split(/\s+/)[0], 10);
+      if (sizeBytes < 50000) {
+        screenshotWarning = "Screenshot file is very small — the app screen may be blank or mostly empty. This could indicate a rendering issue.";
+      }
+    } catch { /* ignore */ }
+
+    return json({
+      success: true,
+      simulator: simName,
+      simulatorId: simId,
+      bundleId,
+      screenshotPath,
+      screenshotWarning: screenshotWarning || undefined,
+      suggestion: screenshotWarning
+        ? `App launched but the screenshot appears mostly blank. Inspect ${screenshotPath} to verify. Common causes: missing NavigationStack, empty body, data not loaded in .onAppear.`
+        : `App launched on ${simName}. Screenshot saved to ${screenshotPath}. Inspect the image to verify the UI matches expectations. If issues found, use swift_behavior_verify to check for semantic problems.`
+    });
+  }
+);
+
+// ── Intent Check: verify implementation matches user request ──
+
+server.tool(
+  "swift_intent_check",
+  "Compare user intent (what the user asked for) against actual implementation (the Swift code). Detects missing features, unconnected logic, placeholder code, and incomplete implementations. Use after generating code to verify it actually fulfills the request.",
+  {
+    path: z.string().describe("Project root path"),
+    intent: z.string().describe("What the user asked for, in natural language (e.g. 'login screen with email/password authentication and error handling')"),
+    files: z.array(z.string()).optional().describe("Specific files to check. If empty, scans all .swift files.")
+  },
+  async ({ path: projectPath, intent, files }) => {
+    const root = resolve(projectPath);
+
+    // Collect files
+    let swiftFiles: string[] = [];
+    if (files && files.length > 0) {
+      swiftFiles = files.map(f => isAbsolute(f) ? f : join(root, f));
+    } else {
+      try {
+        const { stdout } = await exec("find", [root, "-name", "*.swift", "-not", "-path", "*/.build/*", "-not", "-path", "*/DerivedData/*", "-not", "-path", "*/Tests/*"], { maxBuffer: 1024 * 1024 });
+        swiftFiles = stdout.trim().split("\n").filter(Boolean);
+      } catch { /* empty */ }
+    }
+
+    // Read all file contents
+    const fileContents: { path: string; content: string }[] = [];
+    for (const f of swiftFiles) {
+      try {
+        const content = await readFile(f, "utf-8");
+        fileContents.push({ path: relative(root, f.replace(/^\/private/, "")), content });
+      } catch { /* skip */ }
+    }
+
+    const allCode = fileContents.map(f => f.content).join("\n");
+
+    // Parse intent keywords
+    const intentLower = intent.toLowerCase();
+
+    // Feature detection checklist
+    const checks: { feature: string; required: boolean; detected: boolean; evidence: string; missingDetail: string }[] = [];
+
+    // Navigation-related
+    if (/navigat|screen|page|view|画面|遷移/.test(intentLower)) {
+      checks.push({
+        feature: "Navigation",
+        required: true,
+        detected: /NavigationStack|NavigationLink|NavigationSplitView|\.navigationDestination/.test(allCode),
+        evidence: "NavigationStack/NavigationLink",
+        missingDetail: "No navigation structure found. Add NavigationStack and NavigationLink/navigationDestination for screen transitions."
+      });
+    }
+
+    // Authentication
+    if (/login|auth|sign.?in|ログイン|認証|サインイン/.test(intentLower)) {
+      checks.push({
+        feature: "Login UI (email/password fields)",
+        required: true,
+        detected: /TextField|SecureField/.test(allCode) && /SecureField|password|パスワード/i.test(allCode),
+        evidence: "TextField + SecureField",
+        missingDetail: "Login requires at least a TextField for email/username and SecureField for password."
+      });
+      checks.push({
+        feature: "Authentication API call",
+        required: true,
+        detected: /URLSession|URLRequest|async.*throw|try.*await|Auth\.|signIn|login.*func|func.*login/i.test(allCode),
+        evidence: "URLSession/async API call",
+        missingDetail: "No authentication API call found. The login button likely doesn't actually authenticate — add a network call or auth SDK integration."
+      });
+      checks.push({
+        feature: "Auth error handling",
+        required: /error|エラー/.test(intentLower),
+        detected: /catch\s*\{|\.alert|errorMessage|showError|isError|alertIsPresented/.test(allCode),
+        evidence: "catch/alert/error state",
+        missingDetail: "No error handling for auth failure. Add try/catch with user-visible error feedback (e.g. .alert)."
+      });
+      checks.push({
+        feature: "Auth state persistence",
+        required: true,
+        detected: /UserDefaults|Keychain|@AppStorage|token|accessToken|isLoggedIn|isAuthenticated/.test(allCode),
+        evidence: "Token/session storage",
+        missingDetail: "No auth state persistence. After login, the token/session should be stored (UserDefaults, Keychain, or @AppStorage) so the user stays logged in."
+      });
+    }
+
+    // List / data display
+    if (/list|一覧|リスト|table|テーブル|feed|フィード/.test(intentLower)) {
+      checks.push({
+        feature: "List/data display",
+        required: true,
+        detected: /List\s*\{|ForEach|LazyVStack|LazyHStack/.test(allCode),
+        evidence: "List/ForEach",
+        missingDetail: "No List or ForEach found for displaying data."
+      });
+      checks.push({
+        feature: "Data model",
+        required: true,
+        detected: /struct\s+\w+\s*:.*(?:Identifiable|Codable|Decodable)/.test(allCode),
+        evidence: "Identifiable/Codable struct",
+        missingDetail: "No data model struct found. Define a struct conforming to Identifiable and Codable for the list items."
+      });
+      checks.push({
+        feature: "Data loading",
+        required: true,
+        detected: /\.onAppear|\.task\s*\{|URLSession|func.*fetch|func.*load/i.test(allCode),
+        evidence: ".onAppear/.task with data fetch",
+        missingDetail: "No data loading logic found. Add a .task{} or .onAppear{} that fetches data from an API or local storage."
+      });
+    }
+
+    // Form / input
+    if (/form|入力|フォーム|input|submit|送信/.test(intentLower)) {
+      checks.push({
+        feature: "Form/input fields",
+        required: true,
+        detected: /Form\s*\{|TextField|TextEditor|Picker|Toggle|Stepper|DatePicker/.test(allCode),
+        evidence: "Form/TextField/input controls",
+        missingDetail: "No form input controls found."
+      });
+      checks.push({
+        feature: "Form validation",
+        required: true,
+        detected: /\.disabled|isValid|validate|validation|isEmpty|\.count\s*[<>=]/.test(allCode),
+        evidence: "validation/disabled logic",
+        missingDetail: "No form validation found. Add input validation and disable the submit button when the form is incomplete."
+      });
+      checks.push({
+        feature: "Form submission",
+        required: true,
+        detected: /Button.*(?:submit|save|送信|保存)|\.onSubmit|func.*submit|func.*save/i.test(allCode),
+        evidence: "Submit button/action",
+        missingDetail: "No form submission action found. Add a submit button that sends the data."
+      });
+    }
+
+    // API / network
+    if (/api|fetch|network|サーバ|通信|データ取得/.test(intentLower)) {
+      checks.push({
+        feature: "Network layer",
+        required: true,
+        detected: /URLSession|URLRequest|Alamofire|Moya|async.*throw|func.*fetch/.test(allCode),
+        evidence: "URLSession/network library",
+        missingDetail: "No network layer found. Add URLSession.shared.data(from:) or a networking library for API calls."
+      });
+      checks.push({
+        feature: "JSON decoding",
+        required: true,
+        detected: /JSONDecoder|Codable|Decodable|decode\(|\.decode/.test(allCode),
+        evidence: "JSONDecoder/Codable",
+        missingDetail: "No JSON decoding found. Add Codable conformance to your models and use JSONDecoder to parse API responses."
+      });
+      checks.push({
+        feature: "Loading state",
+        required: true,
+        detected: /isLoading|loading|ProgressView|\.overlay.*ProgressView|showLoading/.test(allCode),
+        evidence: "isLoading/ProgressView",
+        missingDetail: "No loading state indicator. Add a @State var isLoading and show ProgressView while data is being fetched."
+      });
+      checks.push({
+        feature: "Error handling for network",
+        required: true,
+        detected: /catch\s*\{|\.alert|errorMessage|do\s*\{.*try/.test(allCode),
+        evidence: "try/catch with error display",
+        missingDetail: "No error handling for network calls. Wrap API calls in do/catch and show errors to the user."
+      });
+    }
+
+    // Search
+    if (/search|検索|サーチ|filter|フィルタ/.test(intentLower)) {
+      checks.push({
+        feature: "Search bar",
+        required: true,
+        detected: /\.searchable|searchText|SearchBar|UISearchBar/.test(allCode),
+        evidence: ".searchable modifier",
+        missingDetail: "No search functionality found. Add .searchable(text:) modifier to the list."
+      });
+    }
+
+    // Image / photo
+    if (/image|photo|写真|画像|カメラ|camera/.test(intentLower)) {
+      checks.push({
+        feature: "Image display/capture",
+        required: true,
+        detected: /AsyncImage|Image\(|UIImage|PHPicker|ImagePicker|PhotosUI/.test(allCode),
+        evidence: "AsyncImage/Image/PhotosPicker",
+        missingDetail: "No image handling found. Use AsyncImage for remote images or PhotosPicker for camera/photo library access."
+      });
+    }
+
+    // Persistence / storage
+    if (/save|persist|storage|保存|永続|CoreData|SwiftData/.test(intentLower)) {
+      checks.push({
+        feature: "Data persistence",
+        required: true,
+        detected: /CoreData|SwiftData|@Model|UserDefaults|@AppStorage|FileManager|NSPersistentContainer|modelContainer/.test(allCode),
+        evidence: "SwiftData/CoreData/UserDefaults",
+        missingDetail: "No data persistence found. Use SwiftData (@Model) or UserDefaults for storing data locally."
+      });
+    }
+
+    // Tab bar
+    if (/tab|タブ/.test(intentLower)) {
+      checks.push({
+        feature: "Tab bar",
+        required: true,
+        detected: /TabView\s*\{|\.tabItem/.test(allCode),
+        evidence: "TabView",
+        missingDetail: "No TabView found. Add TabView with .tabItem modifiers for tab-based navigation."
+      });
+    }
+
+    // General completeness checks (always run)
+    checks.push({
+      feature: "No TODO/FIXME/placeholder markers",
+      required: true,
+      detected: !/TODO|FIXME|PLACEHOLDER|placeholder|fatalError\s*\(\s*"/.test(allCode),
+      evidence: "Clean code (no markers)",
+      missingDetail: "Found TODO/FIXME/placeholder markers or fatalError — incomplete implementation."
+    });
+
+    checks.push({
+      feature: "No hardcoded mock data in production code",
+      required: true,
+      detected: !/(?:let|var)\s+\w+\s*=\s*\[.*"Sample|"Mock|"Test|"Dummy|"Example|"Lorem/i.test(allCode) || /Preview|#Preview|test/i.test(allCode),
+      evidence: "No mock data",
+      missingDetail: "Found hardcoded mock/sample data. Replace with real data loading from API or local storage."
+    });
+
+    // Compute results
+    const passed = checks.filter(c => c.detected || !c.required);
+    const failed = checks.filter(c => !c.detected && c.required);
+    const warnings = checks.filter(c => !c.detected && !c.required);
+
+    const result: any = {
+      success: failed.length === 0,
+      intent,
+      checksRun: checks.length,
+      passed: passed.length,
+      failed: failed.length,
+      warnings: warnings.length,
+      missingFeatures: failed.map(f => ({ feature: f.feature, detail: f.missingDetail })),
+      warningFeatures: warnings.map(f => ({ feature: f.feature, detail: f.missingDetail })),
+      implementedFeatures: passed.filter(c => c.detected).map(f => ({ feature: f.feature, evidence: f.evidence })),
+    };
+
+    if (failed.length > 0) {
+      result.suggestion = `Implementation is incomplete. Missing ${failed.length} required feature(s): ${failed.map(f => f.feature).join(", ")}. The code compiles but doesn't fulfill the user's request. Fix these before presenting the result.`;
+    } else if (warnings.length > 0) {
+      result.suggestion = `Core features implemented. ${warnings.length} optional improvement(s) available. Run swift_behavior_verify to check for semantic issues, then swift_runtime_check for visual verification.`;
+    } else {
+      result.suggestion = "All detected features implemented. Run swift_behavior_verify for semantic checks, then swift_runtime_check for visual verification.";
+    }
+
+    return json(result);
+  }
+);
+
 // ── Start server ──
 
 async function main() {

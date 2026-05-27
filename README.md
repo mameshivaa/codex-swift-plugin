@@ -1,6 +1,6 @@
 # Codex Swift Plugin
 
-[OpenAI Codex](https://openai.com/codex) plugin that bridges Codex to the Swift toolchain. 17 MCP tools, 6 skills, SourceKit-LSP diagnostics, Xcode Bridge, and automated repair loops.
+[OpenAI Codex](https://openai.com/codex) plugin that makes Swift vibe-coding actually work. 20 MCP tools, 6 skills, SourceKit-LSP diagnostics, semantic behavior verification, intent fulfillment checking, and simulator visual verification.
 
 ## Install
 
@@ -54,7 +54,7 @@ Fix all compile errors in this project
 
 ## What's inside
 
-### 17 MCP Tools
+### 20 MCP Tools
 
 | Tool | What it does |
 |------|-------------|
@@ -75,6 +75,9 @@ Fix all compile errors in this project
 | `swift_verify` | Staged verification loop (diagnostics -> typecheck -> build -> test) |
 | `swift_repair_plan` | Generate source-aware repair plan from failures |
 | `swift_repair_next_step` | Select next step in repair execution queue |
+| `swift_behavior_verify` | **Semantic bug detection** -- empty actions, unused state, broken navigation, placeholder data |
+| `swift_runtime_check` | **Visual verification** -- build, launch on simulator, capture screenshot |
+| `swift_intent_check` | **Intent fulfillment** -- verify code does what the user actually asked for |
 
 ### 6 Skills
 
@@ -112,33 +115,44 @@ Create `.codex-swift.json` in your project root:
 ## How it works
 
 ```
-You edit Swift code
-        |
-        v
-PostToolUse hook fires
-        |
-        v
-swift_diagnostics (SourceKit-LSP, ~1s)
-        |
-    errors? ----no----> done
-        |
-       yes
-        |
-        v
-swift_verify (staged: diagnostics -> typecheck -> build -> test)
-        |
-    fails? ----no----> done
-        |
-       yes
-        |
-        v
-swift_repair_plan -> swift_repair_next_step
-        |
-        v
-Codex edits code (minimal diff)
-        |
-        v
-Loop back to verify
+User: "build me a login screen"
+              |
+              v
+    AI generates Swift code
+              |
+              v
+  1. swift_diagnostics ---- does it compile?
+              |
+         compile error? --yes--> swift_repair_plan --> fix --> loop
+              |
+              no
+              v
+  2. swift_behavior_verify - does it actually work?
+              |
+         empty actions?  --yes--> fix empty closures --> loop
+         broken nav?
+         unused state?
+              |
+              no
+              v
+  3. swift_intent_check --- does it do what was asked?
+              |
+         missing auth?   --yes--> implement missing features --> loop
+         no error handling?
+         no data persistence?
+              |
+              no
+              v
+  4. swift_runtime_check -- does it look right?
+              |
+              v
+         screenshot from simulator
+              |
+         blank screen?   --yes--> fix rendering --> loop
+              |
+              no
+              v
+           Done. Working app.
 ```
 
 ## Setup for AI agents
