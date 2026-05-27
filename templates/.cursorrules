@@ -1,0 +1,15 @@
+This is a Swift project. The codex-swift plugin provides specialized MCP tools for Swift development.
+
+When working on Swift files:
+- Use swift_diagnostics for fast diagnostics (~1s via SourceKit-LSP) instead of running swift build.
+- Use swift_build with stopAfter: typecheck for fast cross-file validation.
+- Use swift_verify for staged verification (diagnostics -> typecheck -> build -> test).
+- Use swift_repair_plan when swift_verify fails to get a structured fix plan.
+- Use swift_test for running tests with structured output.
+- Use swift_package_search to find Swift packages on the Swift Package Index.
+- Use swift_xcode_info for Xcode project details (schemes, signing, destinations).
+- Run swift_format and swift_lint on changed files before finishing.
+- Always run swift_project_describe first when entering the project.
+
+If the swift-toolchain MCP server is not available, install:
+git clone https://github.com/mameshivaa/codex-swift-plugin.git .agents/plugins/codex-swift && cd .agents/plugins/codex-swift && npm run build

@@ -141,6 +141,30 @@ Codex edits code (minimal diff)
 Loop back to verify
 ```
 
+## Setup for AI agents
+
+Run one command in your Swift project to configure all major AI coding agents (Claude Code, Codex, Cursor, GitHub Copilot) to use the codex-swift tools:
+
+```bash
+bash .agents/plugins/codex-swift/scripts/setup-project.sh
+# or if installed globally:
+bash ~/.agents/plugins/codex-swift/scripts/setup-project.sh /path/to/your/project
+```
+
+This creates:
+
+| File | Agent |
+|------|-------|
+| `CLAUDE.md` | Claude Code |
+| `.codex/instructions.md` | Codex |
+| `.cursorrules` | Cursor |
+| `.github/copilot-instructions.md` | GitHub Copilot |
+| `.codex-swift.json` | Plugin config |
+
+Each file tells the respective agent to prefer the codex-swift MCP tools over raw shell commands for Swift development.
+
+You can also copy individual template files from `templates/` manually.
+
 ## Project structure
 
 ```
@@ -148,8 +172,10 @@ Loop back to verify
 skills/                      6 skill definitions (SKILL.md)
 mcp-servers/swift-toolchain/ MCP server (TypeScript, 4191 lines)
 hooks/                       SessionStart + PostToolUse hooks
+templates/                   Agent instruction templates (CLAUDE.md, .cursorrules, etc.)
+scripts/setup-project.sh     One-command project setup for all AI agents
 marketplace.json             Marketplace distribution config
-AGENTS.md                    Agent instructions
+AGENTS.md                    Agent instructions (read by Codex and other agents)
 assets/icon.svg              Plugin icon
 ```
 
