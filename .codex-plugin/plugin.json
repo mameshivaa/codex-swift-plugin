@@ -27,7 +27,7 @@
   "interface": {
     "displayName": "Swift Agent Toolchain",
     "shortDescription": "Swift development accelerator for AI coding agents",
-    "longDescription": "Bridge AI coding agents to the Swift toolchain with 21 MCP tools. SourceKit-LSP diagnostics, Xcode Bridge, regex-based semantic checks (24 patterns), architectural pattern detection, keyword-based intent checking, and simulator screenshot capture. Designed to catch common AI-generated Swift bugs: empty actions, impossible states, stale async, silent error swallowing. Works with Claude Code, Codex, Cursor, and GitHub Copilot.",
+    "longDescription": "Bridge AI coding agents to the Swift toolchain with 22 MCP tools. SourceKit-LSP diagnostics, Xcode Bridge, regex-based semantic checks (24 patterns), architectural pattern detection, keyword-based intent checking, and simulator screenshot capture. Designed to catch common AI-generated Swift bugs: empty actions, impossible states, stale async, silent error swallowing. Works with Claude Code, Codex, Cursor, and GitHub Copilot.",
     "developerName": "swift-agent-toolchain",
     "category": "Developer Tools",
     "capabilities": [

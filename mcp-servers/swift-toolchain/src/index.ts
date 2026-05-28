@@ -5491,6 +5491,453 @@ server.tool(
   }
 );
 
+// ── Tool: swift_preflight ──
+
+/**
+ * Known API patterns that require Info.plist keys or entitlements.
+ * Each entry: { pattern (regex on Swift source), plistKey, description, fixInstruction }
+ */
+const PERMISSION_RULES: Array<{
+  pattern: RegExp;
+  plistKey: string;
+  category: string;
+  description: string;
+  fixInstruction: string;
+}> = [
+  // Camera
+  {
+    pattern: /AVCaptureDevice|AVCaptureSession|UIImagePickerController\s*\(|\.camera\b|captureDevice/,
+    plistKey: "NSCameraUsageDescription",
+    category: "camera",
+    description: "Camera access requires a usage description in Info.plist",
+    fixInstruction: 'Add to Info.plist: <key>NSCameraUsageDescription</key><string>This app uses the camera to [your reason]</string>',
+  },
+  // Photo Library
+  {
+    pattern: /PHPhotoLibrary|PHAsset|\.photoLibrary\b|UIImagePickerController.*sourceType.*photoLibrary/,
+    plistKey: "NSPhotoLibraryUsageDescription",
+    category: "photos",
+    description: "Photo library access requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSPhotoLibraryUsageDescription</key><string>This app accesses photos to [your reason]</string>',
+  },
+  // Microphone
+  {
+    pattern: /AVAudioSession|AVAudioRecorder|AVAudioEngine|\.microphone\b|AVCaptureDevice.*audio/,
+    plistKey: "NSMicrophoneUsageDescription",
+    category: "microphone",
+    description: "Microphone access requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSMicrophoneUsageDescription</key><string>This app uses the microphone to [your reason]</string>',
+  },
+  // Location
+  {
+    pattern: /CLLocationManager|CLLocation\b|requestWhenInUseAuthorization|requestAlwaysAuthorization|locationManager/,
+    plistKey: "NSLocationWhenInUseUsageDescription",
+    category: "location",
+    description: "Location access requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSLocationWhenInUseUsageDescription</key><string>This app uses your location to [your reason]</string>',
+  },
+  // Contacts
+  {
+    pattern: /CNContactStore|CNContact\b|requestAccess.*contacts/i,
+    plistKey: "NSContactsUsageDescription",
+    category: "contacts",
+    description: "Contacts access requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSContactsUsageDescription</key><string>This app accesses contacts to [your reason]</string>',
+  },
+  // Calendars
+  {
+    pattern: /EKEventStore|EKEvent\b|requestAccess.*event/i,
+    plistKey: "NSCalendarsUsageDescription",
+    category: "calendars",
+    description: "Calendar access requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSCalendarsUsageDescription</key><string>This app accesses your calendar to [your reason]</string>',
+  },
+  // Face ID
+  {
+    pattern: /LAContext|evaluatePolicy|biometricType|canEvaluatePolicy/,
+    plistKey: "NSFaceIDUsageDescription",
+    category: "biometrics",
+    description: "Face ID usage requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSFaceIDUsageDescription</key><string>This app uses Face ID to [your reason]</string>',
+  },
+  // Speech Recognition
+  {
+    pattern: /SFSpeechRecognizer|SFSpeechAudioBufferRecognitionRequest|requestAuthorization.*speech/i,
+    plistKey: "NSSpeechRecognitionUsageDescription",
+    category: "speech",
+    description: "Speech recognition requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSSpeechRecognitionUsageDescription</key><string>This app uses speech recognition to [your reason]</string>',
+  },
+  // Bluetooth
+  {
+    pattern: /CBCentralManager|CBPeripheralManager|CBPeripheral\b/,
+    plistKey: "NSBluetoothAlwaysUsageDescription",
+    category: "bluetooth",
+    description: "Bluetooth access requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSBluetoothAlwaysUsageDescription</key><string>This app uses Bluetooth to [your reason]</string>',
+  },
+  // HealthKit
+  {
+    pattern: /HKHealthStore|HKObjectType|HKSampleType|requestAuthorization.*health/i,
+    plistKey: "NSHealthShareUsageDescription",
+    category: "healthkit",
+    description: "HealthKit access requires usage descriptions and the HealthKit capability",
+    fixInstruction: 'Add to Info.plist: <key>NSHealthShareUsageDescription</key><string>This app reads health data to [your reason]</string>. Also enable HealthKit in Signing & Capabilities.',
+  },
+  // Background Tasks
+  {
+    pattern: /BGTaskScheduler|BGAppRefreshTaskRequest|BGProcessingTaskRequest/,
+    plistKey: "BGTaskSchedulerPermittedIdentifiers",
+    category: "background-tasks",
+    description: "Background tasks require BGTaskSchedulerPermittedIdentifiers in Info.plist and the Background Modes capability",
+    fixInstruction: 'Add to Info.plist: <key>BGTaskSchedulerPermittedIdentifiers</key><array><string>your.task.identifier</string></array>. Enable Background Modes → Background fetch in Signing & Capabilities.',
+  },
+  // Push Notifications
+  {
+    pattern: /UNUserNotificationCenter|registerForRemoteNotifications|UNNotificationRequest/,
+    plistKey: "aps-environment",
+    category: "push-notifications",
+    description: "Push notifications require the Push Notifications capability (aps-environment entitlement)",
+    fixInstruction: "Enable Push Notifications in Signing & Capabilities. This adds the aps-environment entitlement automatically.",
+  },
+  // ScreenCaptureKit
+  {
+    pattern: /SCShareableContent|SCContentFilter|SCStream\b/,
+    plistKey: "NSScreenCaptureUsageDescription",
+    category: "screen-capture",
+    description: "Screen capture requires a usage description (macOS)",
+    fixInstruction: 'Add to Info.plist: <key>NSScreenCaptureUsageDescription</key><string>This app captures screen content to [your reason]</string>',
+  },
+  // Tracking / ATT
+  {
+    pattern: /ATTrackingManager|requestTrackingAuthorization/,
+    plistKey: "NSUserTrackingUsageDescription",
+    category: "tracking",
+    description: "App Tracking Transparency requires a usage description",
+    fixInstruction: 'Add to Info.plist: <key>NSUserTrackingUsageDescription</key><string>This app uses tracking to [your reason]</string>',
+  },
+];
+
+/**
+ * Patterns for Bundle.main misuse inside SPM package targets.
+ */
+const BUNDLE_MISUSE_PATTERNS: Array<{
+  pattern: RegExp;
+  description: string;
+  fixInstruction: string;
+}> = [
+  {
+    pattern: /Image\(\s*"[^"]+"\s*\)(?!\s*,\s*bundle\s*:)/,
+    description: 'Image("name") without bundle parameter — will fail in SPM packages where resources are in Bundle.module',
+    fixInstruction: 'Change to Image("name", bundle: .module)',
+  },
+  {
+    pattern: /Bundle\.main\.(path|url)\s*\(\s*forResource/,
+    description: "Bundle.main resource lookup — will return nil in SPM package targets",
+    fixInstruction: "Change Bundle.main to Bundle.module for package resources",
+  },
+  {
+    pattern: /NSDataAsset\(\s*name\s*:\s*"[^"]+"\s*\)(?!\s*,\s*bundle\s*:)/,
+    description: "NSDataAsset without bundle parameter — will fail in SPM packages",
+    fixInstruction: 'Change to NSDataAsset(name: "name", bundle: .module)',
+  },
+  {
+    pattern: /UIImage\(\s*named\s*:\s*"[^"]+"\s*\)(?!\s*,\s*in\s*:)/,
+    description: "UIImage(named:) without bundle — will fail in SPM packages",
+    fixInstruction: 'Change to UIImage(named: "name", in: .module, compatibleWith: nil)',
+  },
+  {
+    pattern: /NSLocalizedString\(\s*"[^"]+"\s*,\s*comment/,
+    description: "NSLocalizedString without bundle — may load wrong strings table in SPM packages",
+    fixInstruction: 'Change to NSLocalizedString("key", bundle: .module, comment: "...")',
+  },
+];
+
+interface PreflightIssue {
+  kind: "missing-permission" | "bundle-misuse";
+  category: string;
+  severity: "error" | "warning";
+  file: string;
+  line: number;
+  column: number;
+  codeSnippet: string;
+  description: string;
+  fixInstruction: string;
+  plistKey?: string;
+  readRange: { file: string; startLine: number; endLine: number; reason: string };
+}
+
+async function findInfoPlist(root: string): Promise<{ path: string; content: string } | null> {
+  const candidates = [
+    join(root, "Info.plist"),
+    join(root, "Sources", "Info.plist"),
+  ];
+  // Also search for Info.plist in immediate subdirectories (common Xcode layout)
+  try {
+    const entries = await readdir(root);
+    for (const entry of entries) {
+      if (entry.endsWith(".xcodeproj") || entry === "Sources" || entry === "Resources") continue;
+      const candidate = join(root, entry, "Info.plist");
+      candidates.push(candidate);
+    }
+  } catch {}
+  // Check target directories like MyApp/Info.plist
+  try {
+    const srcEntries = await readdir(join(root, "Sources"));
+    for (const entry of srcEntries) {
+      candidates.push(join(root, "Sources", entry, "Info.plist"));
+      candidates.push(join(root, "Sources", entry, "Resources", "Info.plist"));
+    }
+  } catch {}
+
+  for (const candidate of candidates) {
+    try {
+      const content = await readFile(candidate, "utf-8");
+      return { path: candidate, content };
+    } catch {}
+  }
+  return null;
+}
+
+function plistHasKey(plistContent: string, key: string): boolean {
+  // Simple XML plist key check — works for standard Info.plist format
+  return plistContent.includes(`<key>${key}</key>`);
+}
+
+async function isInsideSPMPackageTarget(filePath: string, root: string): Promise<boolean> {
+  // Check if the file is inside a Sources/ directory of a project with Package.swift
+  try {
+    await access(join(root, "Package.swift"), constants.F_OK);
+    const relPath = relative(root, filePath);
+    return relPath.startsWith("Sources/") || relPath.startsWith("Sources\\");
+  } catch {
+    return false;
+  }
+}
+
+async function collectSwiftFiles(root: string, excludePaths: string[] = []): Promise<string[]> {
+  const results: string[] = [];
+  const defaultExcludes = [".build", "DerivedData", ".swift-agent", "node_modules", ".git", "Pods", "Carthage"];
+  const allExcludes = [...new Set([...defaultExcludes, ...excludePaths])];
+
+  async function walk(dir: string): Promise<void> {
+    let entries: Array<{ name: string; isDirectory: () => boolean }>;
+    try {
+      entries = await readdir(dir, { withFileTypes: true }) as any;
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (allExcludes.some((ex) => entry.name === ex || entry.name.startsWith("."))) continue;
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.name.endsWith(".swift")) {
+        results.push(fullPath);
+      }
+    }
+  }
+  await walk(root);
+  return results;
+}
+
+function extractCodeSnippet(lines: string[], lineIndex: number): string {
+  return lines[lineIndex]?.trimEnd() ?? "";
+}
+
+function readRange(file: string, line: number, reason: string, totalLines: number): PreflightIssue["readRange"] {
+  return {
+    file: file,
+    startLine: Math.max(1, line - 5),
+    endLine: Math.min(totalLines, line + 5),
+    reason,
+  };
+}
+
+server.tool(
+  "swift_preflight",
+  "Detect invisible runtime issues that compile successfully but crash or fail at runtime. Catches missing Info.plist permission keys, Bundle.module misuse in SPM packages, and other compiler-invisible bugs. Returns structured issues with exact file/line locations and fix instructions. Run this BEFORE building — these issues won't appear in compile errors.",
+  {
+    path: z.string().optional().describe("Project directory"),
+    files: z
+      .array(z.string())
+      .optional()
+      .describe("Specific Swift files to scan (default: all .swift files)"),
+  },
+  async ({ path, files }) => {
+    const root = await findProjectRoot(path);
+    const config = await loadConfig(root);
+
+    // Collect target files
+    let swiftFiles: string[];
+    if (files && files.length > 0) {
+      swiftFiles = files.map((f) => (isAbsolute(f) ? f : join(root, f)));
+    } else {
+      swiftFiles = await collectSwiftFiles(root, config.excludePaths);
+    }
+
+    if (swiftFiles.length === 0) {
+      return json({
+        success: true,
+        issueCount: 0,
+        issues: [],
+        scannedFiles: 0,
+        suggestion: "No Swift files found to scan.",
+      });
+    }
+
+    // Load Info.plist
+    const infoPlist = await findInfoPlist(root);
+
+    // Check if project has Package.swift (for Bundle.module checks)
+    let hasPackageSwift = false;
+    try {
+      await access(join(root, "Package.swift"), constants.F_OK);
+      hasPackageSwift = true;
+    } catch {}
+
+    const issues: PreflightIssue[] = [];
+    const detectedPermissionCategories = new Set<string>();
+
+    for (const filePath of swiftFiles) {
+      let content: string;
+      try {
+        content = await readFile(filePath, "utf-8");
+      } catch {
+        continue;
+      }
+      const lines = content.split(/\r?\n/);
+      const relFile = relative(root, filePath);
+      const isInPackage = hasPackageSwift && (relFile.startsWith("Sources/") || relFile.startsWith("Sources\\"));
+
+      // ── Permission checks ──
+      for (const rule of PERMISSION_RULES) {
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          // Skip comments and strings that are clearly not API calls
+          const trimmed = line.trimStart();
+          if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("///")) continue;
+
+          if (rule.pattern.test(line)) {
+            // Avoid duplicating the same category from the same file
+            const dedupKey = `${relFile}:${rule.category}`;
+            if (detectedPermissionCategories.has(dedupKey)) continue;
+            detectedPermissionCategories.add(dedupKey);
+
+            const hasPlistKey = infoPlist ? plistHasKey(infoPlist.content, rule.plistKey) : false;
+            if (!hasPlistKey) {
+              issues.push({
+                kind: "missing-permission",
+                category: rule.category,
+                severity: "error",
+                file: relFile,
+                line: i + 1,
+                column: line.indexOf(line.trimStart()) + 1,
+                codeSnippet: extractCodeSnippet(lines, i),
+                description: rule.description,
+                fixInstruction: rule.fixInstruction,
+                plistKey: rule.plistKey,
+                readRange: readRange(relFile, i + 1, `API call requiring ${rule.plistKey}`, lines.length),
+              });
+            }
+          }
+        }
+      }
+
+      // ── Bundle.module checks (only for SPM package targets) ──
+      if (isInPackage) {
+        for (const rule of BUNDLE_MISUSE_PATTERNS) {
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmed = line.trimStart();
+            if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
+            // Skip #Preview blocks — they're not production code
+            if (trimmed.startsWith("#Preview")) break;
+
+            if (rule.pattern.test(line)) {
+              issues.push({
+                kind: "bundle-misuse",
+                category: "bundle-module",
+                severity: "warning",
+                file: relFile,
+                line: i + 1,
+                column: 1,
+                codeSnippet: extractCodeSnippet(lines, i),
+                description: rule.description,
+                fixInstruction: rule.fixInstruction,
+                readRange: readRange(relFile, i + 1, "Resource access without Bundle.module", lines.length),
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Sort: errors first, then by file/line
+    issues.sort((a, b) => {
+      if (a.severity !== b.severity) return a.severity === "error" ? -1 : 1;
+      if (a.file !== b.file) return a.file.localeCompare(b.file);
+      return a.line - b.line;
+    });
+
+    const errorCount = issues.filter((i) => i.severity === "error").length;
+    const warningCount = issues.filter((i) => i.severity === "warning").length;
+
+    let suggestion: string;
+    if (issues.length === 0) {
+      suggestion = "No preflight issues detected. Proceed with swift_build or swift_verify.";
+    } else if (errorCount > 0) {
+      const missingKeys = issues
+        .filter((i) => i.kind === "missing-permission" && i.plistKey)
+        .map((i) => i.plistKey!);
+      const uniqueKeys = [...new Set(missingKeys)];
+      suggestion =
+        `${errorCount} permission issue(s) will cause runtime crashes. ` +
+        `Missing Info.plist key(s): ${uniqueKeys.join(", ")}. ` +
+        `Fix these BEFORE building — the compiler won't catch them.`;
+    } else {
+      suggestion =
+        `${warningCount} potential issue(s) found (Bundle.module). ` +
+        `These may cause missing resources in SPM packages. Review and fix if applicable.`;
+    }
+
+    const response: Record<string, any> = {
+      success: true,
+      issueCount: issues.length,
+      errorCount,
+      warningCount,
+      issues: issues.slice(0, 30),
+      scannedFiles: swiftFiles.length,
+      infoPlistFound: infoPlist !== null,
+      infoPlistPath: infoPlist ? relative(root, infoPlist.path) : null,
+      isPackageProject: hasPackageSwift,
+      suggestion,
+    };
+
+    // Aggregate readRanges for LLM: "read these exact ranges to understand and fix all issues"
+    if (issues.length > 0) {
+      const uniqueRanges = new Map<string, PreflightIssue["readRange"]>();
+      for (const issue of issues) {
+        const key = `${issue.readRange.file}:${issue.readRange.startLine}-${issue.readRange.endLine}`;
+        if (!uniqueRanges.has(key)) {
+          uniqueRanges.set(key, issue.readRange);
+        }
+      }
+      response.readRanges = [...uniqueRanges.values()];
+      if (infoPlist) {
+        response.readRanges.push({
+          file: relative(root, infoPlist.path),
+          startLine: 1,
+          endLine: 50,
+          reason: "Info.plist — check for missing permission keys",
+        });
+      }
+    }
+
+    return json(response);
+  }
+);
+
 // ── Start server ──
 
 async function main() {

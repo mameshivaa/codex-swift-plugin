@@ -1,6 +1,6 @@
 # Swift Agent Toolchain
 
-You have access to the `swift-toolchain` MCP server with 21 specialized Swift development tools. **Use these tools instead of raw shell commands** whenever you work on Swift code. They are faster, safer, and produce structured output you can act on directly.
+You have access to the `swift-toolchain` MCP server with 22 specialized Swift development tools. **Use these tools instead of raw shell commands** whenever you work on Swift code. They are faster, safer, and produce structured output you can act on directly.
 
 ## When to use this toolchain
 
@@ -12,6 +12,9 @@ Use the swift-toolchain tools whenever you:
 - Fix compile errors or type-checker failures
 
 ## Tool selection guide
+
+**Preflight — catches what the compiler misses (run FIRST):**
+- `swift_preflight` — **Detects invisible runtime issues**: missing Info.plist permission keys (camera, location, contacts, etc.), Bundle.module misuse in SPM packages. Returns exact file/line/fix instructions + `readRanges` telling you which code to read. Deterministic, zero false positives for known patterns. **Run this BEFORE building — these issues compile successfully but crash at runtime.**
 
 **Diagnosing problems** — start here, not with `swift build` in a shell:
 - `swift_diagnostics` — SourceKit-LSP diagnostics in ~1s. Pass specific file paths for LSP mode. Pass empty array for full-project build-based diagnostics.
@@ -53,6 +56,7 @@ Use the swift-toolchain tools whenever you:
 
 After every Swift file edit, run checks in this order:
 
+0. `swift_preflight` on the project — **invisible runtime issues?** (missing plist keys, Bundle.module). Run once per edit session or when new API calls are added.
 1. `swift_diagnostics` with specific files (SourceKit-LSP, ~1s) — **does it compile?**
 2. `swift_behavior_verify` on changed files — **obvious pattern bugs?** (regex-based, may have false positives)
 3. `swift_intent_check` with the user's request — **right keywords present?** (not semantic understanding)

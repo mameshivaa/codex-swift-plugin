@@ -7,6 +7,7 @@
 - `swift_deep_verify` -- architectural pattern detection for media/capture apps (permissions, async state, time-domain, render divergence)
 - `swift_intent_check` -- keyword-based intent fulfillment checking (login, CRUD, navigation, settings)
 - `swift_runtime_check` -- build, launch on simulator, capture screenshot (tap interaction not yet implemented)
+- `swift_preflight` -- deterministic preflight checker for invisible runtime issues (14 Info.plist permission rules, 5 Bundle.module patterns). Returns structured issues with readRanges for LLM context
 
 ### Changed
 - Renamed project from `codex-swift-plugin` to `swift-agent-toolchain` (agent-neutral)

@@ -1,6 +1,6 @@
 # Swift Agent Toolchain
 
-MCP toolchain that connects AI coding agents to the Swift development ecosystem. 21 MCP tools, 6 skills. Targets the bugs that AI-generated Swift code actually produces: empty UI actions, missing permissions, async state corruption, and incomplete feature implementation.
+MCP toolchain that connects AI coding agents to the Swift development ecosystem. 22 MCP tools, 6 skills. Targets the bugs that AI-generated Swift code actually produces — especially the ones the compiler doesn't catch: missing Info.plist permissions, Bundle.module misuse, empty UI actions, async state corruption, and incomplete feature implementation.
 
 Works with **Claude Code**, **Codex**, **Cursor**, and **GitHub Copilot**.
 
@@ -39,43 +39,55 @@ cd ~/.agents/plugins/swift-agent && npm run build
 
 ## Example session
 
-A realistic flow: AI generates a SwiftUI login screen, the toolchain catches what the compiler misses.
+A realistic flow: AI generates a camera-based profile screen. The toolchain catches what the compiler misses — including invisible runtime crashes.
 
 ```
-User: "build me a login screen with email/password"
+User: "build a profile screen with camera avatar upload"
 
-─── Agent generates LoginView.swift ───
+─── Agent generates ProfileView.swift ───
 
-> swift_diagnostics(files: ["LoginView.swift"])
+> swift_preflight(path: ".")
+  ✗ 3 issues — will crash at runtime but compiler won't warn:
+    [MISSING_PERMISSION] Sources/ProfileView.swift:5
+      AVCaptureSession used but NSCameraUsageDescription missing from Info.plist
+      → Fix: add <key>NSCameraUsageDescription</key> to Info.plist
+    [MISSING_PERMISSION] Sources/ProfileView.swift:18
+      PHPhotoLibrary used but NSPhotoLibraryUsageDescription missing
+      → Fix: add <key>NSPhotoLibraryUsageDescription</key> to Info.plist
+    [BUNDLE_MISUSE] Sources/ProfileView.swift:12
+      Image("avatar") without bundle: parameter — will return nil in SPM packages
+      → Fix: change to Image("avatar", bundle: .module)
+  readRanges: [{file: "Sources/ProfileView.swift", lines: 1-20}, {file: "Info.plist", lines: 1-50}]
+
+─── Agent adds Info.plist keys and fixes Bundle.module ───
+
+> swift_diagnostics(files: ["ProfileView.swift"])
   ✓ No compile errors (SourceKit-LSP, 0.9s)
 
-> swift_behavior_verify(files: ["LoginView.swift"])
-  ✗ 2 issues found:
-    [EMPTY_ACTION] Line 24: Button("Login") { } — action body is empty
-    [UNUSED_STATE] Line 8: @State var errorMessage — declared but never read in body
+> swift_behavior_verify(files: ["ProfileView.swift"])
+  ✗ 1 issue:
+    [EMPTY_ACTION] Line 24: Button("Take Photo") { } — action body is empty
 
-─── Agent fixes: adds authentication call in button, displays errorMessage ───
-
-> swift_behavior_verify(files: ["LoginView.swift"])
-  ✓ 0 issues
-
-> swift_intent_check(files: ["LoginView.swift"], intent: "login screen with email/password")
-  ✗ 1 gap:
-    [MISSING] No error handling for failed authentication (no Alert or error display after URLSession call)
-
-─── Agent adds error handling with .alert modifier ───
+─── Agent adds camera capture logic in button action ───
 
 > swift_runtime_check(path: ".", scheme: "MyApp")
   ✓ Built and launched on iPhone 16 Pro simulator
-  ✓ Screenshot saved to .swift-agent/screenshots/runtime-check-001.png
-    (Manual review: login form visible, both fields rendered, button present)
+  ✓ Screenshot saved — profile form visible, avatar placeholder rendered
 ```
 
-**What this doesn't do yet:** `swift_runtime_check` captures a screenshot but cannot tap buttons or verify interactive behavior. The `swift_intent_check` matches keywords ("login" → expects TextField, SecureField, URLSession), not semantic understanding. See [Maturity](#maturity).
+**The key difference:** Without `swift_preflight`, the code compiles cleanly but crashes on first camera access. The compiler sees nothing wrong. The preflight catches it before you waste a build-test-debug cycle.
+
+**What this doesn't do yet:** `swift_runtime_check` captures screenshots but cannot tap buttons. `swift_intent_check` matches keywords, not semantic meaning. See [Maturity](#maturity).
 
 ## What's inside
 
-### 21 MCP Tools
+### 22 MCP Tools
+
+**Preflight — catches what the compiler misses (deterministic):**
+
+| Tool | What it does |
+|------|-------------|
+| `swift_preflight` | **Detect invisible runtime issues** — missing Info.plist permission keys, Bundle.module misuse in SPM packages. Returns exact file/line/fix instructions + readRanges for the LLM. Zero false positives for known patterns. Run BEFORE building. |
 
 **Core build/diagnose (battle-tested):**
 
@@ -148,6 +160,12 @@ User: "build me a login screen"
     AI generates Swift code
               |
               v
+  0. swift_preflight ------- invisible runtime issues?  ← NEW: runs BEFORE build
+              |
+         missing plist keys? --yes--> add Info.plist entries --> continue
+         Bundle.module issue? -yes--> fix bundle refs --> continue
+              |
+              v
   1. swift_diagnostics ---- does it compile?
               |
          compile error? --yes--> swift_repair_plan --> fix --> loop
@@ -177,7 +195,7 @@ User: "build me a login screen"
               |
               no
               v
-           Done — compiles, passes pattern checks, renders.
+           Done — preflight clean, compiles, passes pattern checks, renders.
            Manual testing still required for interactive behavior.
 ```
 
@@ -185,6 +203,7 @@ User: "build me a login screen"
 
 | Component | Status | What works | What doesn't yet |
 |-----------|--------|------------|------------------|
+| `swift_preflight` | **Solid** | 14 permission rules (camera, location, contacts, etc.), 5 Bundle.module patterns. Deterministic, zero false positives for known patterns. Returns readRanges per issue. | Only checks Info.plist XML format, not entitlements files. Doesn't detect all possible API patterns. |
 | SourceKit-LSP diagnostics | **Solid** | ~1s incremental diagnostics, build fallback | stderr suppressed — LSP failures appear as "no diagnostics" |
 | Build/test/verify loop | **Solid** | Staged verification, repair queue, stall detection | — |
 | Repair execution queue | **Solid** | Failure fingerprinting, loop detection, escalation | — |
