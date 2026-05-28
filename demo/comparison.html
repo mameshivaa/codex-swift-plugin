@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swift Agent Toolchain — Before vs After</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+    background: #0a0a0a;
+    color: #e0e0e0;
+    min-height: 100vh;
+  }
+
+  .header {
+    text-align: center;
+    padding: 60px 20px 40px;
+    background: linear-gradient(180deg, #1a1a2e 0%, #0a0a0a 100%);
+  }
+  .header h1 {
+    font-size: 42px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #F05138 0%, #FF8A65 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 12px;
+  }
+  .header .subtitle {
+    font-size: 18px;
+    color: #888;
+    max-width: 700px;
+    margin: 0 auto;
+    line-height: 1.6;
+  }
+
+  .scenario {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 20px;
+  }
+  .scenario-title {
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #666;
+    margin-bottom: 8px;
+  }
+  .scenario-desc {
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 30px;
+  }
+
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  .panel {
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid #222;
+  }
+  .panel.without { background: #1a0a0a; border-color: #3a1515; }
+  .panel.with { background: #0a1a0a; border-color: #153a15; }
+
+  .panel-header {
+    padding: 16px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel.without .panel-header {
+    background: #2a0f0f;
+    color: #ff6b6b;
+  }
+  .panel.with .panel-header {
+    background: #0f2a0f;
+    color: #6bff6b;
+  }
+
+  .terminal {
+    padding: 20px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    min-height: 400px;
+  }
+
+  .prompt { color: #888; }
+  .cmd { color: #7ec8e3; font-weight: 500; }
+  .success { color: #4ade80; }
+  .error { color: #f87171; }
+  .warning { color: #fbbf24; }
+  .info { color: #94a3b8; }
+  .dim { color: #555; }
+  .highlight { color: #fff; font-weight: 500; }
+  .file { color: #c084fc; }
+  .fix { color: #67e8f9; }
+  .crash { color: #ff4444; font-weight: 700; background: #330000; padding: 2px 6px; border-radius: 4px; }
+
+  .step {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #222;
+  }
+  .step:last-child { border-bottom: none; }
+
+  .step-num {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 24px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-right: 8px;
+  }
+  .panel.without .step-num { background: #3a1515; color: #ff6b6b; }
+  .panel.with .step-num { background: #153a15; color: #6bff6b; }
+
+  .result-bar {
+    margin-top: 40px;
+    padding: 30px 20px;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .result-card {
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+  }
+  .result-card.bad {
+    background: linear-gradient(135deg, #2a0f0f 0%, #1a0a0a 100%);
+    border: 1px solid #3a1515;
+  }
+  .result-card.good {
+    background: linear-gradient(135deg, #0f2a0f 0%, #0a1a0a 100%);
+    border: 1px solid #153a15;
+  }
+  .result-number {
+    font-size: 48px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .result-card.bad .result-number { color: #f87171; }
+  .result-card.good .result-number { color: #4ade80; }
+  .result-label {
+    font-size: 14px;
+    color: #888;
+  }
+
+  .bottom-section {
+    max-width: 1200px;
+    margin: 60px auto;
+    padding: 0 20px 80px;
+  }
+  .bottom-section h2 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+
+  .coverage-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 30px;
+  }
+  .coverage-card {
+    background: #111;
+    border: 1px solid #222;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .coverage-card h3 {
+    font-size: 15px;
+    color: #F05138;
+    margin-bottom: 8px;
+  }
+  .coverage-card p {
+    font-size: 13px;
+    color: #888;
+    line-height: 1.5;
+  }
+  .coverage-card .tool-name {
+    display: inline-block;
+    background: #1a1a2e;
+    color: #7ec8e3;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-top: 8px;
+  }
+
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .tag.new { background: #F05138; color: #fff; }
+  .tag.solid { background: #1a3a1a; color: #4ade80; }
+  .tag.proto { background: #3a3a1a; color: #fbbf24; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Swift Agent Toolchain</h1>
+  <div class="subtitle">
+    AI agent generates a photo-sharing app with camera, location, contacts.<br>
+    Same code. Same compiler. Different outcomes.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Scenario</div>
+  <div class="scenario-desc">
+    "Build a photo-sharing profile screen with camera avatar upload, location, and contact import"
+  </div>
+</div>
+
+<div class="comparison">
+  <!-- WITHOUT PLUGIN -->
+  <div class="panel without">
+    <div class="panel-header">
+      <span>&#10006;</span> Without Swift Agent Toolchain
+    </div>
+    <div class="terminal">
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="highlight">AI generates 4 Swift files</span><br>
+        <span class="dim">CameraView.swift, ProfileView.swift, FeedView.swift, App.swift</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="prompt">$</span> <span class="cmd">swift build</span><br>
+        <span class="success">Build complete! (0 errors, 0 warnings)</span><br>
+        <span class="dim">// Compiler sees nothing wrong</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="highlight">Run on Simulator</span><br>
+        <span class="crash">CRASH: NSCameraUsageDescription not found</span><br>
+        <span class="error">App terminated due to missing privacy description</span><br>
+        <span class="dim">// User pastes crash log to AI agent</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">4</span>
+        <span class="highlight">AI adds camera plist key, rebuilds</span><br>
+        <span class="crash">CRASH: NSPhotoLibraryUsageDescription not found</span><br>
+        <span class="dim">// Another round trip...</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">5</span>
+        <span class="highlight">AI adds photo library key, rebuilds</span><br>
+        <span class="crash">CRASH: NSLocationWhenInUseUsageDescription not found</span><br>
+        <span class="dim">// And another...</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">6</span>
+        <span class="highlight">AI adds location key, rebuilds</span><br>
+        <span class="crash">CRASH: NSContactsUsageDescription not found</span><br>
+        <span class="dim">// 4th crash, 4th round trip</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">7</span>
+        <span class="highlight">Finally runs. But...</span><br>
+        <span class="warning">"Take Photo" button does nothing</span><br>
+        <span class="warning">Bio text field is read-only</span><br>
+        <span class="warning">Avatar image is missing (nil)</span><br>
+        <span class="warning">Feed always shows "No Posts"</span><br>
+        <span class="dim">// User reports bugs manually, more round trips</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- WITH PLUGIN -->
+  <div class="panel with">
+    <div class="panel-header">
+      <span>&#10004;</span> With Swift Agent Toolchain
+    </div>
+    <div class="terminal">
+
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="highlight">AI generates 4 Swift files</span><br>
+        <span class="dim">CameraView.swift, ProfileView.swift, FeedView.swift, App.swift</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="prompt">&gt;</span> <span class="cmd">swift_preflight()</span><br>
+        <span class="error">4 errors, 1 warning found BEFORE build:</span><br><br>
+        <span class="error">&#10006;</span> <span class="file">CameraView.swift:11</span> <span class="info">NSCameraUsageDescription missing</span><br>
+        <span class="error">&#10006;</span> <span class="file">CameraView.swift:33</span> <span class="info">NSPhotoLibraryUsageDescription missing</span><br>
+        <span class="error">&#10006;</span> <span class="file">ProfileView.swift:14</span> <span class="info">NSLocationWhenInUseUsageDescription missing</span><br>
+        <span class="error">&#10006;</span> <span class="file">ProfileView.swift:15</span> <span class="info">NSContactsUsageDescription missing</span><br>
+        <span class="warning">&#9888;</span> <span class="file">ProfileView.swift:22</span> <span class="info">Image("avatar") needs bundle: .module</span><br><br>
+        <span class="fix">Fix: add 4 keys to Info.plist, change to Image("avatar", bundle: .module)</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="highlight">AI fixes all 5 issues at once</span><br>
+        <span class="dim">Creates Info.plist with all 4 permission keys</span><br>
+        <span class="dim">Fixes Bundle.module reference</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">4</span>
+        <span class="prompt">&gt;</span> <span class="cmd">swift_behavior_verify()</span><br>
+        <span class="warning">3 warnings found:</span><br><br>
+        <span class="warning">&#9888;</span> <span class="file">CameraView.swift:29</span> <span class="info">Button("Take Photo") has empty action</span><br>
+        <span class="warning">&#9888;</span> <span class="file">ProfileView.swift:12</span> <span class="info">@State bio never mutated</span><br>
+        <span class="warning">&#9888;</span> <span class="file">FeedView.swift:4</span> <span class="info">@State posts never mutated</span><br><br>
+        <span class="fix">Fix: implement camera capture, fix .constant() binding, add data loading</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">5</span>
+        <span class="highlight">AI fixes all 3 behavior issues</span><br>
+        <span class="prompt">&gt;</span> <span class="cmd">swift_diagnostics()</span><br>
+        <span class="success">&#10004; No compile errors (0.9s)</span><br>
+        <span class="prompt">&gt;</span> <span class="cmd">swift_behavior_verify()</span><br>
+        <span class="success">&#10004; 0 issues</span>
+      </div>
+
+      <div class="step">
+        <span class="step-num">6</span>
+        <span class="prompt">&gt;</span> <span class="cmd">swift_runtime_check()</span><br>
+        <span class="success">&#10004; Built and launched on simulator</span><br>
+        <span class="success">&#10004; Screenshot captured — all views rendered</span><br>
+        <span class="dim">App works on first real launch. No crashes.</span>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Result numbers -->
+<div class="result-bar">
+  <div class="result-grid">
+    <div class="result-card bad">
+      <div class="result-number">7+</div>
+      <div class="result-label">Round trips to working app<br>(4 crashes + UI bug reports)</div>
+    </div>
+    <div class="result-card good">
+      <div class="result-number">2</div>
+      <div class="result-label">Round trips to working app<br>(preflight fix + behavior fix)</div>
+    </div>
+  </div>
+</div>
+
+<!-- Coverage section -->
+<div class="bottom-section">
+  <h2>What the compiler doesn't catch</h2>
+
+  <div class="coverage-grid">
+    <div class="coverage-card">
+      <h3>Missing Permissions</h3>
+      <p>Camera, photos, location, contacts, microphone, Bluetooth, HealthKit, Face ID, speech, tracking... Code compiles. App crashes on first API call.</p>
+      <div class="tool-name">swift_preflight</div>
+      <span class="tag new">NEW</span>
+    </div>
+    <div class="coverage-card">
+      <h3>Bundle.module Misuse</h3>
+      <p>Image("x") in SPM packages loads from wrong bundle. Assets silently return nil. No compiler warning.</p>
+      <div class="tool-name">swift_preflight</div>
+      <span class="tag new">NEW</span>
+    </div>
+    <div class="coverage-card">
+      <h3>Empty Button Actions</h3>
+      <p>Button("Save") { } compiles and renders. User taps. Nothing happens. AI thinks it's done.</p>
+      <div class="tool-name">swift_behavior_verify</div>
+      <span class="tag proto">PROTOTYPE</span>
+    </div>
+    <div class="coverage-card">
+      <h3>Unused @State</h3>
+      <p>@State var data declared, bound to UI, but never written to. View always shows initial/empty state.</p>
+      <div class="tool-name">swift_behavior_verify</div>
+      <span class="tag proto">PROTOTYPE</span>
+    </div>
+    <div class="coverage-card">
+      <h3>Repair Loop Stalls</h3>
+      <p>AI applies same fix 3 times. Fingerprinting detects repeated failure and escalates strategy.</p>
+      <div class="tool-name">swift_verify</div>
+      <span class="tag solid">SOLID</span>
+    </div>
+    <div class="coverage-card">
+      <h3>Sub-second Diagnostics</h3>
+      <p>SourceKit-LSP gives compile errors in ~1s instead of full build. Keeps the edit-verify loop tight.</p>
+      <div class="tool-name">swift_diagnostics</div>
+      <span class="tag solid">SOLID</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
